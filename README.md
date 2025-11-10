@@ -3,12 +3,12 @@
 This repository provisions an AWS-based automation stack that runs a WireGuard VPN server in the Tokyo region and exposes a lightweight Web UI for controlled start, stop, and monitoring operations. Terraform creates every AWS resource, while Lambda functions implement the control logic that enforces weekday restrictions and low-traffic shutdowns.
 
 ## Solution Highlights
-- **EC2 (default `t4g.small`)** launched from the configured AMI (`vpn_ami_id`, default `ami-0f52389a8648b923a`) with a 30 GB encrypted gp3 root volume and no additional user-data overrides.
+- **EC2 (default `t3a.small`)** launched from the configured AMI (`vpn_ami_id`, default `ami-0f52389a8648b923a`) with a 30 GB encrypted gp3 root volume and no additional user-data overrides.
 - **Dedicated networking stack** (new VPC, single public subnet, internet gateway, and route table) plus an ENI with an Elastic IP to keep the VPN’s public address stable across reboots.
 - **Managed SSH key pair** generated via Terraform and exposed as sensitive output for immediate download; the EC2 instance uses this key for admin access.
 - **Lambda functions (Python 3.12)** handling start, stop, status, and network-monitor workflows.
 - **API Gateway (REST)** exposing `/start`, `/stop`, `/status` endpoints locked behind an API key.
-- **EventBridge schedules** for weekday midnight shutdown (Australia/Sydney) and traffic monitoring.
+- **EventBridge Scheduler** jobs for weekday midnight shutdown and 15-minute traffic monitoring, both timezone-aware for Australia/Sydney.
 - **S3 + CloudFront** delivering a static HTML/CSS Web UI that interacts with the API.
 - **IAM** scoped to Lambda only—no IAM role is attached to the VPN instance, and Lambda logging permissions are removed to avoid CloudWatch log charges.
 
@@ -21,7 +21,7 @@ This repository provisions an AWS-based automation stack that runs a WireGuard V
       |    \           | | | |
       |     > start_instance / stop_instance / check_status / monitor_traffic
       v
-[Amazon EventBridge]  (scheduled stop + traffic checks)
+[Amazon EventBridge Scheduler]  (scheduled stop + traffic checks)
       |
       v
 [EC2 WireGuard VPN]
@@ -87,13 +87,13 @@ web/                  # Static assets for the Web UI served via CloudFront
 3. Outside the restricted window (including all weekend hours), `index.html` displays Start/Stop/Status buttons. On the first click the page prompts for:
    - **API base URL** (for example, `https://<api-id>.execute-api.ap-northeast-1.amazonaws.com/prod`).
    - **API key** copied from API Gateway.
-4. After the prompts, the request runs and the response appears in plain text (e.g., “Server already running.” or “VPN not available”). Details are saved to `localStorage`; use **Reset saved API details** to reconfigure.
+4. After the prompts, the request runs and the response appears in plain text (e.g., “Server already running.” or “VPN warming up…”). Details are saved to `localStorage`; use **Reset saved API details** to reconfigure.
 
 ## Lambda Behavior Summary
 - **start_instance**: Enforces the Australia/Sydney weekday restriction (no manual starts between 00:00–13:00 local time). Returns the resulting instance state.
 - **stop_instance**: Stops the instance when invoked via API or the scheduled weekday midnight rule. Idempotent when the instance is already stopping or stopped.
-- **check_status**: Reports instance state, IPs, and health checks with timestamps in Australia/Sydney time.
-- **monitor_traffic**: Runs every 15 minutes (timezone-aware cron), evaluates combined `NetworkIn`/`NetworkOut` for the trailing 1.5 hours, and stops the instance if sustained traffic ≤ 1 MB/hour.
+- **check_status**: Reports instance state, IPs, and the latest EC2 system/instance status checks, marking the VPN as available only after both checks pass, with timestamps in Australia/Sydney time.
+- **monitor_traffic**: Runs every 15 minutes via EventBridge Scheduler, evaluates combined `NetworkIn`/`NetworkOut` for the trailing 1.5 hours, and stops the instance if sustained traffic ≤ 1 MB/hour.
 
 ## Cleanup
 To remove all resources, run:
