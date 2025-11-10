@@ -1,0 +1,57 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>VPN Service Unavailable</title>
+    <link rel="stylesheet" href="styles.css">
+</head>
+<body>
+    <main class="container">
+        <h1>VPN Temporarily Unavailable</h1>
+        <p class="hint">The service pauses for routine cost control between midnight and 13:00 (Australia/Sydney) on weekdays.</p>
+        <p class="result">Please come back after the restricted window ends. We will automatically reload this page once control access returns.</p>
+        <button type="button" id="refresh" class="link-button">Check again now</button>
+    </main>
+
+    <script>
+        const TIMEZONE = "Australia/Sydney";
+        const WEEKDAY_START_HOUR = 13;
+
+        function getTimeInfo() {
+            const now = new Date();
+            const formatter = new Intl.DateTimeFormat("en-AU", {
+                timeZone: TIMEZONE,
+                weekday: "short",
+                hour: "numeric",
+                minute: "numeric",
+                hour12: false
+            });
+            const parts = formatter.formatToParts(now);
+            const weekday = parts.find((p) => p.type === "weekday").value;
+            const hour = parseInt(parts.find((p) => p.type === "hour").value, 10);
+            const isWeekend = weekday === "Sat" || weekday === "Sun";
+            return { isWeekend, hour };
+        }
+
+        function isAllowedWindow() {
+            const info = getTimeInfo();
+            if (info.isWeekend) {
+                return true;
+            }
+            return info.hour >= WEEKDAY_START_HOUR;
+        }
+
+        function redirectIfAllowed() {
+            if (isAllowedWindow()) {
+                window.location.replace("index.html");
+            }
+        }
+
+        document.getElementById("refresh").addEventListener("click", redirectIfAllowed);
+
+        redirectIfAllowed();
+        setInterval(redirectIfAllowed, 60000);
+    </script>
+</body>
+</html>

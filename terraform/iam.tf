@@ -1,0 +1,94 @@
+data "aws_iam_policy_document" "lambda_assume" {
+  statement {
+    effect = "Allow"
+
+    principals {
+      type        = "Service"
+      identifiers = ["lambda.amazonaws.com"]
+    }
+
+    actions = ["sts:AssumeRole"]
+  }
+}
+
+data "aws_iam_policy_document" "lambda_control" {
+  statement {
+    effect = "Allow"
+    actions = [
+      "ec2:StartInstances",
+      "ec2:StopInstances"
+    ]
+    resources = [aws_instance.vpn.arn]
+  }
+
+  statement {
+    effect = "Allow"
+    actions = [
+      "ec2:DescribeInstances",
+      "ec2:DescribeInstanceStatus",
+      "ec2:DescribeTags"
+    ]
+    resources = ["*"]
+  }
+
+  statement {
+    effect = "Allow"
+    actions = [
+      "cloudwatch:GetMetricStatistics",
+      "cloudwatch:GetMetricData"
+    ]
+    resources = ["*"]
+  }
+}
+
+resource "aws_iam_role" "lambda" {
+  name               = "${var.project_name}-lambda-role"
+  assume_role_policy = data.aws_iam_policy_document.lambda_assume.json
+  tags               = local.tags
+}
+
+resource "aws_iam_role_policy" "lambda_control" {
+  name   = "${var.project_name}-lambda-control"
+  role   = aws_iam_role.lambda.id
+  policy = data.aws_iam_policy_document.lambda_control.json
+}
+
+data "aws_caller_identity" "current" {}
+
+data "aws_iam_policy_document" "scheduler_assume" {
+  statement {
+    effect = "Allow"
+
+    principals {
+      type        = "Service"
+      identifiers = ["scheduler.amazonaws.com"]
+    }
+
+    actions = ["sts:AssumeRole"]
+  }
+}
+
+data "aws_iam_policy_document" "scheduler_invoke_lambda" {
+  statement {
+    effect = "Allow"
+    actions = [
+      "lambda:InvokeFunction"
+    ]
+    resources = [
+      aws_lambda_function.stop_instance.arn,
+      aws_lambda_function.monitor_traffic.arn
+    ]
+  }
+}
+
+resource "aws_iam_role" "scheduler" {
+  name               = "${var.project_name}-scheduler-role"
+  assume_role_policy = data.aws_iam_policy_document.scheduler_assume.json
+  tags               = local.tags
+}
+
+resource "aws_iam_role_policy" "scheduler_invoke" {
+  name   = "${var.project_name}-scheduler-invoke"
+  role   = aws_iam_role.scheduler.id
+  policy = data.aws_iam_policy_document.scheduler_invoke_lambda.json
+}

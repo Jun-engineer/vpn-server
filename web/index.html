@@ -1,0 +1,222 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>VPN Server Control</title>
+    <link rel="stylesheet" href="styles.css">
+</head>
+<body>
+    <main class="container">
+        <h1>VPN Server Control</h1>
+        <p class="hint">Click a button to send a request. If needed, the page will ask once for the API URL and API key.</p>
+
+        <div class="actions">
+            <button type="button" data-action="start">Start VPN</button>
+            <button type="button" data-action="stop">Stop VPN</button>
+            <button type="button" data-action="status">Check Status</button>
+        </div>
+
+        <p id="result" class="result" aria-live="polite">Awaiting action...</p>
+        <button type="button" id="reset-config" class="link-button">Reset saved API details</button>
+    </main>
+
+    <script>
+        const CONFIG_KEY = "vpn-controller-config";
+        const TIMEZONE = "Australia/Sydney";
+        const WEEKDAY_START_HOUR = 13;
+
+        const resultContainer = document.getElementById("result");
+        const resetButton = document.getElementById("reset-config");
+        const actionButtons = document.querySelectorAll("button[data-action]");
+
+        function getTimeInfo() {
+            const now = new Date();
+            const formatter = new Intl.DateTimeFormat("en-AU", {
+                timeZone: TIMEZONE,
+                weekday: "short",
+                hour: "numeric",
+                minute: "numeric",
+                hour12: false
+            });
+            const parts = formatter.formatToParts(now);
+            const weekday = parts.find((p) => p.type === "weekday").value;
+            const hour = parseInt(parts.find((p) => p.type === "hour").value, 10);
+            const isWeekend = weekday === "Sat" || weekday === "Sun";
+            return { isWeekend, hour };
+        }
+
+        function isServiceAvailable() {
+            const info = getTimeInfo();
+            if (info.isWeekend) {
+                return true;
+            }
+            return info.hour >= WEEKDAY_START_HOUR;
+        }
+
+        function enforceAvailability() {
+            if (!isServiceAvailable()) {
+                window.location.replace("unavailable.html");
+                return false;
+            }
+            return true;
+        }
+
+        function readConfig() {
+            try {
+                const stored = localStorage.getItem(CONFIG_KEY);
+                return stored ? JSON.parse(stored) : {};
+            } catch (error) {
+                console.error("Failed to read stored config", error);
+                return {};
+            }
+        }
+
+        function ensureConfig() {
+            const config = readConfig();
+            if (config.role !== undefined) {
+                delete config.role;
+            }
+
+            if (!config.apiBase) {
+                const value = prompt("Enter the API base URL (e.g. https://abc123.execute-api.ap-northeast-1.amazonaws.com/prod)");
+                if (!value) {
+                    throw new Error("API base URL is required.");
+                }
+                config.apiBase = value.trim();
+            }
+
+            if (!config.apiKey) {
+                const value = prompt("Enter the API key provided by the administrator");
+                if (!value) {
+                    throw new Error("API key is required.");
+                }
+                config.apiKey = value.trim();
+            }
+
+            localStorage.setItem(CONFIG_KEY, JSON.stringify(config));
+            return config;
+        }
+
+        function formatStartResponse(response) {
+            const state = (response.state || "").toLowerCase();
+            if (state === "running") {
+                return "Server already running.";
+            }
+            if (state === "pending") {
+                return "Starting the server... (Press Check Status to confirm).";
+            }
+            if (response.message) {
+                return response.message;
+            }
+            return "Start request sent.";
+        }
+
+        function formatStopResponse(response) {
+            const state = (response.state || "").toLowerCase();
+            if (state === "stopped") {
+                return "Server already stopped.";
+            }
+            if (state === "stopping") {
+                return "Stopping the server... (Press Check Status to confirm).";
+            }
+            if (response.message) {
+                return response.message;
+            }
+            return "Stop request sent.";
+        }
+
+        function formatStatusResponse(response) {
+            const state = (response.state || "").toLowerCase();
+            if (state === "running") {
+                if (response.statusChecksPassed) {
+                    return "VPN available";
+                }
+                const systemStatus = (response.systemStatus || "initializing").toLowerCase();
+                const instanceStatus = (response.instanceStatus || "initializing").toLowerCase();
+                return `VPN warming up (system check: ${systemStatus}, instance check: ${instanceStatus})`;
+            }
+            if (state === "pending") {
+                return "VPN starting...";
+            }
+            if (state === "stopping") {
+                return "VPN stopping...";
+            }
+            if (state === "stopped") {
+                return "VPN not available";
+            }
+            return response.message || `Unknown state: ${response.state || "n/a"}`;
+        }
+
+        function formatError(error) {
+            if (!error) {
+                return "Request failed.";
+            }
+            if (typeof error === "string") {
+                return error;
+            }
+            if (error.message) {
+                return error.message;
+            }
+            return JSON.stringify(error);
+        }
+
+        async function callApi(action) {
+            if (action !== "status" && !isServiceAvailable()) {
+                resultContainer.textContent = "Control is disabled until 13:00 Australia/Sydney on weekdays.";
+                return;
+            }
+
+            let config;
+            try {
+                config = ensureConfig();
+            } catch (error) {
+                resultContainer.textContent = error.message;
+                return;
+            }
+
+            const endpoint = `${config.apiBase.replace(/\/$/, "")}/${action}`;
+            const method = action === "status" ? "GET" : "POST";
+
+            try {
+                const response = await fetch(endpoint, {
+                    method,
+                    headers: {
+                        "Content-Type": "application/json",
+                        "x-api-key": config.apiKey
+                    },
+                    body: method === "POST" ? JSON.stringify({ action }) : undefined
+                });
+
+                const json = await response.json();
+                let message;
+                if (!response.ok) {
+                    message = formatError(json.message || json.error || `Request failed with ${response.status}`);
+                } else if (action === "start") {
+                    message = formatStartResponse(json);
+                } else if (action === "stop") {
+                    message = formatStopResponse(json);
+                } else {
+                    message = formatStatusResponse(json);
+                }
+
+                resultContainer.textContent = message;
+            } catch (error) {
+                console.error("API call failed", error);
+                resultContainer.textContent = formatError(error);
+            }
+        }
+
+        actionButtons.forEach((button) => {
+            button.addEventListener("click", () => callApi(button.dataset.action));
+        });
+
+        resetButton.addEventListener("click", () => {
+            localStorage.removeItem(CONFIG_KEY);
+            resultContainer.textContent = "Saved API details cleared. Click a button to enter them again.";
+        });
+
+        enforceAvailability();
+    </script>
+</body>
+</html>
