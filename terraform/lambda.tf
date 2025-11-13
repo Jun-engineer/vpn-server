@@ -22,6 +22,12 @@ data "archive_file" "monitor_traffic" {
   output_path = "${path.module}/build/monitor_traffic.zip"
 }
 
+data "archive_file" "register_peer" {
+  type        = "zip"
+  source_file = "${path.module}/../lambda_functions/register_peer.py"
+  output_path = "${path.module}/build/register_peer.zip"
+}
+
 resource "aws_lambda_function" "start_instance" {
   function_name = "${var.project_name}-start"
   role          = aws_iam_role.lambda.arn
@@ -79,5 +85,19 @@ resource "aws_lambda_function" "monitor_traffic" {
     variables = merge(local.lambda_env_common, {
       AUTO_STOP_SOURCE = "monitor"
     })
+  }
+}
+
+resource "aws_lambda_function" "register_peer" {
+  function_name    = "${var.project_name}-register"
+  role             = aws_iam_role.lambda.arn
+  handler          = "register_peer.handler"
+  runtime          = "python3.12"
+  filename         = data.archive_file.register_peer.output_path
+  source_code_hash = data.archive_file.register_peer.output_base64sha256
+  timeout          = 120
+
+  environment {
+    variables = local.lambda_env_register
   }
 }

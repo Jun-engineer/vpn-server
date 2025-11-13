@@ -1,0 +1,291 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>VPN Admin Console</title>
+    <link rel="stylesheet" href="styles.css">
+</head>
+<body>
+    <main class="container">
+        <h1>VPN Admin Console</h1>
+        <p class="hint">Administrative access bypasses the maintenance window. Limit distribution of this page and credentials.</p>
+
+        <section class="actions-block" aria-label="Admin actions">
+            <div class="actions">
+                <button type="button" data-action="start">Start VPN</button>
+                <button type="button" data-action="stop">Stop VPN</button>
+                <button type="button" data-action="status">Check Status</button>
+            </div>
+
+            <p id="result" class="result" aria-live="polite" data-state="info">Awaiting action...</p>
+        </section>
+
+        <section class="instructions" aria-label="Admin usage instructions">
+            <h2>How to operate</h2>
+            <ol>
+                <li>Enter the API base URL and API key when prompted. Values are stored locally in your browser.</li>
+                <li><strong>Start VPN</strong> brings the instance online immediately, regardless of the public maintenance window.</li>
+                <li><strong>Stop VPN</strong> issues a manual shutdown (auto-stop policies remain in effect).</li>
+                <li><strong>Check Status</strong> confirms the EC2 state and health checks; look for “VPN available”.</li>
+                <li>Use the registration form to onboard a new WireGuard client public key and capture the returned IP / preshared key.</li>
+            </ol>
+        </section>
+
+        <section class="register" aria-label="Register a new device">
+            <h2>Register a device</h2>
+            <p class="register-hint">Paste the client’s WireGuard public key. The system reserves an IP address and generates a preshared key.</p>
+            <textarea id="public-key" rows="4" placeholder="Paste client public key here"></textarea>
+            <button type="button" id="register-peer">Register peer</button>
+            <p id="register-result" class="register-result" aria-live="polite"></p>
+        </section>
+        <button type="button" id="reset-config" class="link-button">Reset saved API details</button>
+    </main>
+
+    <script>
+        const CONFIG_KEY = "vpn-controller-config";
+
+        const resultContainer = document.getElementById("result");
+        const resetButton = document.getElementById("reset-config");
+        const actionButtons = document.querySelectorAll("button[data-action]");
+        const registerButton = document.getElementById("register-peer");
+        const publicKeyInput = document.getElementById("public-key");
+        const registerResult = document.getElementById("register-result");
+
+        function readConfig() {
+            try {
+                const stored = localStorage.getItem(CONFIG_KEY);
+                return stored ? JSON.parse(stored) : {};
+            } catch (error) {
+                console.error("Failed to read stored config", error);
+                return {};
+            }
+        }
+
+        function ensureConfig() {
+            const config = readConfig();
+            if (config.role !== undefined) {
+                delete config.role;
+            }
+
+            if (!config.apiBase) {
+                const value = prompt("Enter the API base URL (e.g. https://abc123.execute-api.ap-northeast-1.amazonaws.com/prod)");
+                if (!value) {
+                    throw new Error("API base URL is required.");
+                }
+                config.apiBase = value.trim();
+            }
+
+            if (!config.apiKey) {
+                const value = prompt("Enter the API key provided by the administrator");
+                if (!value) {
+                    throw new Error("API key is required.");
+                }
+                config.apiKey = value.trim();
+            }
+
+            localStorage.setItem(CONFIG_KEY, JSON.stringify(config));
+            return config;
+        }
+
+        function formatStartResponse(response) {
+            const state = (response.state || "").toLowerCase();
+            if (state === "running") {
+                return "Server already running.";
+            }
+            if (state === "pending") {
+                return "Starting the server... (Press Check Status to confirm).";
+            }
+            if (response.message) {
+                return response.message;
+            }
+            return "Start request sent.";
+        }
+
+        function formatStopResponse(response) {
+            const state = (response.state || "").toLowerCase();
+            if (state === "stopped") {
+                return "Server already stopped.";
+            }
+            if (state === "stopping") {
+                return "Stopping the server... (Press Check Status to confirm).";
+            }
+            if (response.message) {
+                return response.message;
+            }
+            return "Stop request sent.";
+        }
+
+        function formatStatusResponse(response) {
+            const state = (response.state || "").toLowerCase();
+            if (state === "running") {
+                if (response.statusChecksPassed) {
+                    return "VPN available";
+                }
+                const systemStatus = (response.systemStatus || "initializing").toLowerCase();
+                const instanceStatus = (response.instanceStatus || "initializing").toLowerCase();
+                return `VPN warming up (system check: ${systemStatus}, instance check: ${instanceStatus})`;
+            }
+            if (state === "pending") {
+                return "VPN starting...";
+            }
+            if (state === "stopping") {
+                return "VPN stopping...";
+            }
+            if (state === "stopped") {
+                return "VPN not available";
+            }
+            return response.message || `Unknown state: ${response.state || "n/a"}`;
+        }
+
+        function formatRegisterResponse(response) {
+            const ip = response.assignedIp ? `${response.assignedIp}/32` : "unknown";
+            const psk = response.presharedKey || "(none)";
+            if (response.alreadyExists) {
+                return `Peer already registered. Use IP ${ip}. Existing preshared key: ${psk}.`;
+            }
+            return `New peer registered. Assign IP ${ip} and preshared key ${psk}.`;
+        }
+
+        function formatError(error) {
+            if (!error) {
+                return "Request failed.";
+            }
+            if (typeof error === "string") {
+                return error;
+            }
+            if (error.message) {
+                return error.message;
+            }
+            return JSON.stringify(error);
+        }
+
+        function updateResult(message, state = "info") {
+            if (state) {
+                resultContainer.dataset.state = state;
+            } else {
+                delete resultContainer.dataset.state;
+            }
+            resultContainer.textContent = message;
+        }
+
+        async function callApi(action, options = {}) {
+            let config;
+            try {
+                config = ensureConfig();
+            } catch (error) {
+                const friendly = error.message || "Configuration required.";
+                if (action === "register") {
+                    registerResult.textContent = friendly;
+                    registerResult.classList.add("visible");
+                    registerResult.dataset.state = "error";
+                } else {
+                    updateResult(friendly, "error");
+                }
+                return { success: false, error: friendly };
+            }
+
+            if (action !== "register") {
+                updateResult("Sending request...", "working");
+            }
+
+            const endpoint = `${config.apiBase.replace(/\/$/, "")}/${action}`;
+            const method = action === "status" ? "GET" : "POST";
+            const bodyPayload = options.body ? JSON.stringify(options.body) : (method === "POST" ? JSON.stringify({ action }) : undefined);
+
+            try {
+                const response = await fetch(endpoint, {
+                    method,
+                    headers: {
+                        "Content-Type": "application/json",
+                        "x-api-key": config.apiKey
+                    },
+                    body: bodyPayload
+                });
+
+                const json = await response.json();
+                let message;
+                if (!response.ok) {
+                    message = formatError(json.message || json.error || `Request failed with ${response.status}`);
+                    if (action === "register") {
+                        registerResult.textContent = message;
+                        registerResult.classList.add("visible");
+                        registerResult.dataset.state = "error";
+                        return { success: false, error: message };
+                    }
+                    updateResult(message, "error");
+                    return { success: false, error: message };
+                } else if (action === "start") {
+                    message = formatStartResponse(json);
+                    const lower = message.toLowerCase();
+                    const state = lower.includes("starting") ? "working" : "success";
+                    updateResult(message, state);
+                } else if (action === "stop") {
+                    message = formatStopResponse(json);
+                     const lower = message.toLowerCase();
+                     const state = lower.includes("stopping") ? "working" : "success";
+                     updateResult(message, state);
+                } else if (action === "register") {
+                    const registerMessage = formatRegisterResponse(json);
+                    registerResult.textContent = registerMessage;
+                    registerResult.classList.add("visible");
+                    registerResult.dataset.state = "success";
+                    return { success: true, data: json };
+                } else {
+                    message = formatStatusResponse(json);
+                    const lower = message.toLowerCase();
+                    let state = "info";
+                    if (lower.includes("available")) {
+                        state = "success";
+                    } else if (lower.includes("not available") || lower.includes("failed") || lower.includes("stopping")) {
+                        state = "error";
+                    } else if (lower.includes("starting") || lower.includes("warming") || lower.includes("pending")) {
+                        state = "working";
+                    }
+                    updateResult(message, state);
+                }
+                return { success: true, data: json };
+            } catch (error) {
+                console.error("API call failed", error);
+                const friendly = formatError(error);
+                if (action === "register") {
+                    registerResult.textContent = friendly;
+                    registerResult.classList.add("visible");
+                    registerResult.dataset.state = "error";
+                } else {
+                    updateResult(friendly, "error");
+                }
+                return { success: false, error: friendly };
+            }
+        }
+
+        actionButtons.forEach((button) => {
+            button.addEventListener("click", () => callApi(button.dataset.action));
+        });
+
+        registerButton.addEventListener("click", async () => {
+            const publicKey = (publicKeyInput.value || "").trim();
+            registerResult.textContent = "";
+            registerResult.classList.remove("visible");
+            delete registerResult.dataset.state;
+
+            if (!publicKey) {
+                registerResult.textContent = "Public key is required.";
+                registerResult.dataset.state = "error";
+                registerResult.classList.add("visible");
+                return;
+            }
+
+            const outcome = await callApi("register", { body: { publicKey } });
+            if (outcome && outcome.success) {
+                publicKeyInput.value = "";
+            }
+        });
+
+        resetButton.addEventListener("click", () => {
+            localStorage.removeItem(CONFIG_KEY);
+            updateResult("Saved API details cleared. Click a button to enter them again.", "info");
+        });
+    </script>
+</body>
+</html>

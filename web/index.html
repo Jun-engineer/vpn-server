@@ -11,14 +11,24 @@
         <h1>VPN Server Control</h1>
         <p class="hint">Click a button to send a request. If needed, the page will ask once for the API URL and API key.</p>
 
-        <div class="actions">
-            <button type="button" data-action="start">Start VPN</button>
-            <button type="button" data-action="stop">Stop VPN</button>
-            <button type="button" data-action="status">Check Status</button>
-        </div>
+        <section class="actions-block" aria-label="VPN actions">
+            <div class="actions">
+                <button type="button" data-action="start">Start VPN</button>
+                <button type="button" data-action="status">Check Status</button>
+            </div>
 
-        <p id="result" class="result" aria-live="polite">Awaiting action...</p>
-        <button type="button" id="reset-config" class="link-button">Reset saved API details</button>
+            <p id="result" class="result" aria-live="polite" data-state="info">Awaiting action...</p>
+            <button type="button" id="reset-config" class="link-button">Reset saved API details</button>
+        </section>
+        <section class="instructions" aria-label="Usage instructions">
+            <h2>How to use this VPN controller</h2>
+            <ol>
+                <li>Make sure you are outside the weekday maintenance window (weekdays after 13:00 Australia/Sydney or anytime on weekends). Otherwise you will be redirected to the unavailable page.</li>
+                <li>Click any action button. On first use you will be prompted for the API base URL and API key from Terraform outputs. These values remain in your browser only.</li>
+                <li>Use <strong>Start VPN</strong> when you need the server. After starting, select <strong>Check Status</strong> until the message switches from “VPN warming up…” to “VPN available”.</li>
+                <li>Auto-stop policies handle shutdowns, so there is no manual Stop button. Use <strong>Reset saved API details</strong> if you need to switch credentials.</li>
+            </ol>
+        </section>
     </main>
 
     <script>
@@ -112,20 +122,6 @@
             return "Start request sent.";
         }
 
-        function formatStopResponse(response) {
-            const state = (response.state || "").toLowerCase();
-            if (state === "stopped") {
-                return "Server already stopped.";
-            }
-            if (state === "stopping") {
-                return "Stopping the server... (Press Check Status to confirm).";
-            }
-            if (response.message) {
-                return response.message;
-            }
-            return "Stop request sent.";
-        }
-
         function formatStatusResponse(response) {
             const state = (response.state || "").toLowerCase();
             if (state === "running") {
@@ -161,22 +157,34 @@
             return JSON.stringify(error);
         }
 
-        async function callApi(action) {
-            if (action !== "status" && !isServiceAvailable()) {
-                resultContainer.textContent = "Control is disabled until 13:00 Australia/Sydney on weekdays.";
-                return;
+        function updateResult(message, state = "info") {
+            if (state) {
+                resultContainer.dataset.state = state;
+            } else {
+                delete resultContainer.dataset.state;
+            }
+            resultContainer.textContent = message;
+        }
+
+        async function callApi(action, options = {}) {
+            if (action === "start" && !isServiceAvailable()) {
+                updateResult("Control is disabled until 13:00 Australia/Sydney on weekdays.", "error");
+                return { success: false, error: "Outside allowed window." };
             }
 
             let config;
             try {
                 config = ensureConfig();
             } catch (error) {
-                resultContainer.textContent = error.message;
+                updateResult(error.message, "error");
                 return;
             }
 
+            updateResult("Sending request...", "working");
+
             const endpoint = `${config.apiBase.replace(/\/$/, "")}/${action}`;
             const method = action === "status" ? "GET" : "POST";
+            const bodyPayload = options.body ? JSON.stringify(options.body) : (method === "POST" ? JSON.stringify({ action }) : undefined);
 
             try {
                 const response = await fetch(endpoint, {
@@ -185,25 +193,28 @@
                         "Content-Type": "application/json",
                         "x-api-key": config.apiKey
                     },
-                    body: method === "POST" ? JSON.stringify({ action }) : undefined
+                    body: bodyPayload
                 });
 
                 const json = await response.json();
                 let message;
                 if (!response.ok) {
                     message = formatError(json.message || json.error || `Request failed with ${response.status}`);
+                    updateResult(message, "error");
                 } else if (action === "start") {
                     message = formatStartResponse(json);
-                } else if (action === "stop") {
-                    message = formatStopResponse(json);
+                    updateResult(message, "success");
                 } else {
                     message = formatStatusResponse(json);
+                    const state = message.toLowerCase().includes("available") ? "success" : "info";
+                    updateResult(message, state);
                 }
-
-                resultContainer.textContent = message;
+                return { success: response.ok, data: json };
             } catch (error) {
                 console.error("API call failed", error);
-                resultContainer.textContent = formatError(error);
+                const friendly = formatError(error);
+                updateResult(friendly, "error");
+                return { success: false, error: friendly };
             }
         }
 
@@ -213,7 +224,7 @@
 
         resetButton.addEventListener("click", () => {
             localStorage.removeItem(CONFIG_KEY);
-            resultContainer.textContent = "Saved API details cleared. Click a button to enter them again.";
+            updateResult("Saved API details cleared. Click a button to enter them again.", "info");
         });
 
         enforceAvailability();

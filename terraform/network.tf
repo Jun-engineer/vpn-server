@@ -103,6 +103,7 @@ resource "aws_instance" "vpn" {
   instance_type     = var.vpn_instance_type
   availability_zone = var.public_subnet_az
   key_name          = aws_key_pair.vpn.key_name
+  iam_instance_profile = aws_iam_instance_profile.instance.name
 
   network_interface {
     device_index         = 0

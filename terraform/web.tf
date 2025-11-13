@@ -8,6 +8,15 @@ resource "aws_s3_bucket" "web_ui" {
   tags          = local.tags
 }
 
+resource "aws_cloudfront_function" "admin_basic_auth" {
+  name    = "${var.project_name}-admin-basic-auth"
+  runtime = "cloudfront-js-1.0"
+  publish = true
+  code    = templatefile("${path.module}/../cloudfront/admin_basic_auth.js", {
+    basic_header = local.admin_basic_auth_header
+  })
+}
+
 resource "aws_s3_bucket_ownership_controls" "web_ui" {
   bucket = aws_s3_bucket.web_ui.id
 
@@ -39,6 +48,10 @@ resource "aws_s3_object" "web_ui_files" {
   for_each = {
     "index.html" = {
       source = "${path.module}/../web/index.html"
+      content_type = "text/html"
+    }
+    "admin.html" = {
+      source = "${path.module}/../web/admin.html"
       content_type = "text/html"
     }
     "unavailable.html" = {
@@ -105,6 +118,11 @@ resource "aws_cloudfront_distribution" "web_ui" {
     min_ttl                = 0
     default_ttl            = 0
     max_ttl                = 60
+
+    function_association {
+      event_type   = "viewer-request"
+      function_arn = aws_cloudfront_function.admin_basic_auth.arn
+    }
   }
 
   restrictions {

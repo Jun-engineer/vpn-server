@@ -39,6 +39,18 @@ data "aws_iam_policy_document" "lambda_control" {
     ]
     resources = ["*"]
   }
+
+  statement {
+    effect = "Allow"
+    actions = [
+      "ssm:SendCommand",
+      "ssm:GetCommandInvocation"
+    ]
+    resources = [
+      aws_instance.vpn.arn,
+      "arn:aws:ssm:${var.aws_region}:${data.aws_caller_identity.current.account_id}:document/AWS-RunShellScript"
+    ]
+  }
 }
 
 resource "aws_iam_role" "lambda" {
@@ -54,6 +66,35 @@ resource "aws_iam_role_policy" "lambda_control" {
 }
 
 data "aws_caller_identity" "current" {}
+
+data "aws_iam_policy_document" "instance_assume" {
+  statement {
+    effect = "Allow"
+
+    principals {
+      type        = "Service"
+      identifiers = ["ec2.amazonaws.com"]
+    }
+
+    actions = ["sts:AssumeRole"]
+  }
+}
+
+resource "aws_iam_role" "instance" {
+  name               = "${var.project_name}-instance-role"
+  assume_role_policy = data.aws_iam_policy_document.instance_assume.json
+  tags               = local.tags
+}
+
+resource "aws_iam_role_policy_attachment" "instance_ssm" {
+  role       = aws_iam_role.instance.name
+  policy_arn = "arn:aws:iam::aws:policy/AmazonSSMManagedInstanceCore"
+}
+
+resource "aws_iam_instance_profile" "instance" {
+  name = "${var.project_name}-instance-profile"
+  role = aws_iam_role.instance.name
+}
 
 data "aws_iam_policy_document" "scheduler_assume" {
   statement {

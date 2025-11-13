@@ -100,6 +100,48 @@ variable "monitor_period_seconds" {
   default     = 900
 }
 
+variable "wireguard_client_subnet" {
+  description = "CIDR block containing WireGuard client addresses."
+  type        = string
+  default     = "192.168.100.0/24"
+}
+
+variable "wireguard_server_address" {
+  description = "WireGuard server interface address (without CIDR)."
+  type        = string
+  default     = "192.168.100.1"
+}
+
+variable "wireguard_interface_name" {
+  description = "WireGuard interface name on the EC2 host."
+  type        = string
+  default     = "wg0"
+}
+
+variable "wireguard_config_path" {
+  description = "Absolute path to the WireGuard configuration file on the EC2 host."
+  type        = string
+  default     = "/etc/wireguard/wg0.conf"
+}
+
+variable "register_command_timeout_seconds" {
+  description = "Timeout in seconds for the SSM registration command to complete."
+  type        = number
+  default     = 120
+}
+
+variable "admin_basic_auth_username" {
+  description = "Username required to access admin.html via CloudFront basic authentication."
+  type        = string
+  default     = "admin"
+}
+
+variable "admin_basic_auth_password" {
+  description = "Password required to access admin.html via CloudFront basic authentication."
+  type        = string
+  default     = "changeme123!"
+}
+
 variable "web_bucket_name" {
   description = "Optional custom S3 bucket name for the Web UI. Leave blank to auto-generate."
   type        = string
