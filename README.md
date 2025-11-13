@@ -88,12 +88,12 @@ web/                  # Static assets for the Web UI served via CloudFront
 ## Web UI Configuration
 1. Browse to the CloudFront domain from the Terraform output.
 2. If it is a weekday between 00:00 and 13:00 Australia/Sydney, you will be shown `unavailable.html`, which explains the downtime and automatically refreshes once access returns.
-3. Outside the restricted window (including all weekend hours), `index.html` displays Start/Status buttons and a peer registration form. On the first click the page prompts for:
+3. Outside the restricted window (including all weekend hours), `index.html` displays Start/Status buttons with a highlighted status panel. On the first click the page prompts for:
    - **API base URL** (for example, `https://<api-id>.execute-api.ap-northeast-1.amazonaws.com/prod`).
    - **API key** copied from API Gateway.
-4. After the prompts, the request runs and the response appears in plain text (e.g., “Server already running.” or “VPN warming up…”). Peer registrations return the assigned `/32` IP and generated preshared key. Details are saved to `localStorage`; use **Reset saved API details** to reconfigure.
-5. For each new WireGuard client, paste its public key into the registration form. The UI will display the allocated IP address and preshared key—copy them into the client configuration.
-6. Administrators can browse to `<cloudfront-domain>/admin.html` to bypass the maintenance window, access the manual stop action, and register peers even during restricted hours. You will be prompted for the HTTP Basic credentials configured via `admin_basic_auth_username`/`admin_basic_auth_password`; share them (and the admin API key) only with trusted operators.
+4. After the prompts, the request runs and the response appears in the result panel (e.g., “Server already running.” or “VPN warming up…”). Details are saved to `localStorage`; use **Reset saved API details** to reconfigure.
+5. Administrators can browse to `<cloudfront-domain>/admin.html` to bypass the maintenance window, access the manual stop action, and register peers even during restricted hours. The admin page includes the WireGuard registration form that returns the allocated `/32` IP and generated preshared key—copy them into the client configuration.
+6. You will be prompted for the HTTP Basic credentials configured via `admin_basic_auth_username`/`admin_basic_auth_password`; share them (and the admin API key) only with trusted operators.
 
 ## Lambda Behavior Summary
 - **start_instance**: Enforces the Australia/Sydney weekday restriction (no manual starts between 00:00–13:00 local time). Returns the resulting instance state.
