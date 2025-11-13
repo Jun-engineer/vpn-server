@@ -11,6 +11,7 @@ This repository provisions an AWS-based automation stack that runs a WireGuard V
 - **EventBridge Scheduler** jobs for weekday midnight shutdown and 15-minute traffic monitoring, both timezone-aware for Australia/Sydney.
 - **S3 + CloudFront** delivering a static HTML/CSS Web UI that interacts with the API.
 - **Admin console** served at `admin.html` for trusted operators who need to bypass the maintenance window and access the full control surface.
+- **SNS notifications** fired whenever a manual start request is issued, with optional email subscriptions.
 - **IAM** kept minimal: Lambda receives only the permissions required for EC2 control, monitoring, and Systems Manager commands, while the VPN instance is attached to an `AmazonSSMManagedInstanceCore` profile for remote peer management.
 
 ## Architecture
@@ -47,6 +48,7 @@ web/                  # Static assets for the Web UI served via CloudFront
    - Ensure `wireguard_client_subnet` and `wireguard_server_address` reflect the addressing used in `/etc/wireguard/wg0.conf`; the peer registration Lambda relies on these values when allocating client IPs.
    - Confirm the selected AMI includes the AWS Systems Manager Agent (SSM Agent). Amazon Linux 2/2023 images ship with it enabled by default.
    - Set `admin_basic_auth_username` and `admin_basic_auth_password` to non-default values before deploying to production; these control the CloudFront basic-auth gate for `admin.html`.
+   - Optionally populate `start_notification_emails` with the addresses that should receive SNS alerts when the VPN is started.
 
 2. **Initialize Terraform**
    ```bash
@@ -66,6 +68,7 @@ web/                  # Static assets for the Web UI served via CloudFront
    terraform apply
    ```
    Confirm the run and wait until all resources finish provisioning. The outputs include the API invoke URL, the CloudFront domain, and the EC2 instance ID.
+   If you supplied `start_notification_emails`, check your email for the SNS subscription confirmation message and confirm it to begin receiving alerts.
 
 5. **Retrieve the API key value**
    Terraform outputs the API key ID, not the actual secret value. To fetch it:
@@ -93,7 +96,18 @@ web/                  # Static assets for the Web UI served via CloudFront
    - **API key** copied from API Gateway.
 4. After the prompts, the request runs and the response appears in the result panel (e.g., “Server already running.” or “VPN warming up…”). Details are saved to `localStorage`; use **Reset saved API details** to reconfigure.
 5. Administrators can browse to `<cloudfront-domain>/admin.html` to bypass the maintenance window, access the manual stop action, and register peers even during restricted hours. The admin page includes the WireGuard registration form that returns the allocated `/32` IP and generated preshared key—copy them into the client configuration.
-6. You will be prompted for the HTTP Basic credentials configured via `admin_basic_auth_username`/`admin_basic_auth_password`; share them (and the admin API key) only with trusted operators.
+6. You will be prompted for the HTTP Basic credentials configured via `admin_basic_auth_username`/`admin_basic_auth_password`; share them (and the admin API key) only with trusted operators. Successful start requests emit an SNS notification (see Terraform outputs for the topic ARN).
+
+## Running Tests
+
+Install the development dependencies and execute the `pytest` suite from the repository root:
+
+```bash
+pip install -r requirements-test.txt
+pytest
+```
+
+The tests rely on `moto` to mock AWS services and currently cover the VPN start handler, ensuring time-window enforcement and the SNS notification path.
 
 ## Lambda Behavior Summary
 - **start_instance**: Enforces the Australia/Sydney weekday restriction (no manual starts between 00:00–13:00 local time). Returns the resulting instance state.

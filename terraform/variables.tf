@@ -130,6 +130,12 @@ variable "register_command_timeout_seconds" {
   default     = 120
 }
 
+variable "start_notification_emails" {
+  description = "Email addresses to subscribe to VPN start notifications. Leave empty to manage subscriptions manually."
+  type        = list(string)
+  default     = []
+}
+
 variable "admin_basic_auth_username" {
   description = "Username required to access admin.html via CloudFront basic authentication."
   type        = string

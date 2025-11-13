@@ -38,7 +38,9 @@ resource "aws_lambda_function" "start_instance" {
   timeout       = 30
 
   environment {
-    variables = local.lambda_env_common
+    variables = merge(local.lambda_env_common, {
+      START_NOTIFICATION_TOPIC_ARN = aws_sns_topic.start_notifications.arn
+    })
   }
 }
 

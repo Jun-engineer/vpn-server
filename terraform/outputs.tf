@@ -43,3 +43,8 @@ output "ssh_private_key_pem" {
   value       = tls_private_key.vpn.private_key_pem
   sensitive   = true
 }
+
+output "start_notification_topic_arn" {
+  description = "SNS topic ARN that receives VPN start notifications."
+  value       = aws_sns_topic.start_notifications.arn
+}

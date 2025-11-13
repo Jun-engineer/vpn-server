@@ -51,6 +51,14 @@ data "aws_iam_policy_document" "lambda_control" {
       "arn:aws:ssm:${var.aws_region}:${data.aws_caller_identity.current.account_id}:document/AWS-RunShellScript"
     ]
   }
+
+  statement {
+    effect = "Allow"
+    actions = [
+      "sns:Publish"
+    ]
+    resources = [aws_sns_topic.start_notifications.arn]
+  }
 }
 
 resource "aws_iam_role" "lambda" {
