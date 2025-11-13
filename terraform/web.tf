@@ -62,6 +62,18 @@ resource "aws_s3_object" "web_ui_files" {
       source = "${path.module}/../web/styles.css"
       content_type = "text/css"
     }
+    "favicon.svg" = {
+      source = "${path.module}/../web/favicon.svg"
+      content_type = "image/svg+xml"
+    }
+    "favicon-32x32.png" = {
+      source = "${path.module}/../web/favicon-32x32.png"
+      content_type = "image/png"
+    }
+    "favicon-16x16.png" = {
+      source = "${path.module}/../web/favicon-16x16.png"
+      content_type = "image/png"
+    }
   }
 
   bucket       = aws_s3_bucket.web_ui.id
