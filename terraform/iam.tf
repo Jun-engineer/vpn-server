@@ -48,8 +48,17 @@ data "aws_iam_policy_document" "lambda_control" {
     ]
     resources = [
       aws_instance.vpn.arn,
-      "arn:aws:ssm:${var.aws_region}:${data.aws_caller_identity.current.account_id}:document/AWS-RunShellScript"
+      "arn:aws:ssm:${var.aws_region}:${data.aws_caller_identity.current.account_id}:document/AWS-RunShellScript",
+      "arn:aws:ssm:${var.aws_region}::document/AWS-RunShellScript"
     ]
+  }
+
+  statement {
+    effect = "Allow"
+    actions = [
+      "ssm:GetCommandInvocation"
+    ]
+    resources = ["*"]
   }
 
   statement {
@@ -58,6 +67,18 @@ data "aws_iam_policy_document" "lambda_control" {
       "sns:Publish"
     ]
     resources = [aws_sns_topic.start_notifications.arn]
+  }
+
+  statement {
+    effect = "Allow"
+    actions = [
+      "logs:CreateLogGroup",
+      "logs:CreateLogStream",
+      "logs:PutLogEvents"
+    ]
+    resources = [
+      "arn:aws:logs:${var.aws_region}:${data.aws_caller_identity.current.account_id}:*"
+    ]
   }
 }
 

@@ -144,23 +144,40 @@
         function formatRegisterResponse(response) {
             const ip = response.assignedIp ? `${response.assignedIp}/32` : "unknown";
             const psk = response.presharedKey || "(none)";
+            const key = response.publicKey || "(unknown key)";
+            const serverKey = response.serverPublicKey || "(unknown server key)";
             if (response.alreadyExists) {
-                return `Peer already registered. Use IP ${ip}. Existing preshared key: ${psk}.`;
+                return `Peer already registered for ${key}. Server key ${serverKey}. Use IP ${ip}. Existing preshared key: ${psk}.`;
             }
-            return `New peer registered. Assign IP ${ip} and preshared key ${psk}.`;
+            return `New peer registered for ${key}. Server key ${serverKey}. Assign IP ${ip} and preshared key ${psk}.`;
         }
 
         function formatError(error) {
             if (!error) {
                 return "Request failed.";
             }
+            let message;
             if (typeof error === "string") {
-                return error;
+                message = error;
+            } else if (error.message) {
+                message = error.message;
+            } else {
+                return JSON.stringify(error);
             }
-            if (error.message) {
-                return error.message;
+            if (typeof message === "string") {
+                const trimmed = message.trim();
+                if (trimmed.startsWith("<?xml")) {
+                    const codeMatch = trimmed.match(/<Code>([^<]+)<\/Code>/i);
+                    const msgMatch = trimmed.match(/<Message>([^<]+)<\/Message>/i);
+                    const code = codeMatch ? codeMatch[1] : "Error";
+                    const detail = msgMatch ? msgMatch[1] : "Access denied";
+                    return `${code}: ${detail}. Double-check that the API base URL is the API Gateway invoke URL (including the stage) rather than the CloudFront site.`;
+                }
+                if (trimmed.toLowerCase() === "forbidden") {
+                    return "Forbidden: confirm the API key and invoke URL are correct, and that this key has access to the stage you are calling.";
+                }
             }
-            return JSON.stringify(error);
+            return message;
         }
 
         function updateResult(message, state = "info") {
@@ -206,8 +223,25 @@
                     body: bodyPayload
                 });
 
-                const json = await response.json();
+                let json;
                 let message;
+                try {
+                    const contentType = response.headers.get("content-type") || "";
+                    if (contentType.includes("application/json")) {
+                        json = await response.json();
+                    } else {
+                        const text = await response.text();
+                        try {
+                            json = JSON.parse(text);
+                        } catch (parseError) {
+                            json = { message: text };
+                        }
+                    }
+                } catch (parseError) {
+                    console.error("Failed to parse response", parseError);
+                    json = { message: "Response was not valid JSON." };
+                }
+
                 if (!response.ok) {
                     message = formatError(json.message || json.error || `Request failed with ${response.status}`);
                     if (action === "register") {

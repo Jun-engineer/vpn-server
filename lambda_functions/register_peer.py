@@ -1,8 +1,13 @@
+"""Lambda function to register WireGuard peers via SSM."""
+
+import base64
 import json
 import logging
 import os
+import shlex
+import textwrap
 import time
-from typing import Any, Dict
+from typing import Any, Dict, List
 
 import boto3
 from botocore.exceptions import ClientError
@@ -22,7 +27,7 @@ DEFAULT_HEADERS = {
     "Content-Type": "application/json",
     "Access-Control-Allow-Origin": "*",
     "Access-Control-Allow-Headers": "Content-Type,X-Api-Key",
-    "Access-Control-Allow-Methods": "OPTIONS,GET,POST"
+    "Access-Control-Allow-Methods": "OPTIONS,GET,POST",
 }
 
 
@@ -30,34 +35,27 @@ def _response(status: int, payload: Dict[str, Any]) -> Dict[str, Any]:
     return {
         "statusCode": status,
         "headers": DEFAULT_HEADERS,
-        "body": json.dumps(payload, ensure_ascii=False)
+        "body": json.dumps(payload, ensure_ascii=False),
     }
 
 
-def _escape_heredoc(value: str) -> str:
-    # Heredoc with single quotes prevents interpretation; ensure terminator not present
-    return value.replace("EOF", "EOX")
-
-
-def _build_ssm_commands(public_key: str) -> list[str]:
-    sanitized_key = _escape_heredoc(public_key.strip())
-    wg_conf = _escape_heredoc(WG_CONF_PATH)
-    client_subnet = _escape_heredoc(CLIENT_SUBNET)
-    server_address = _escape_heredoc(SERVER_ADDRESS)
-    wg_interface = _escape_heredoc(WG_INTERFACE)
-
-    python_script = """import ipaddress
+def _build_ssm_commands(public_key: str) -> List[str]:
+    # Inline Python writes WireGuard peer configuration atomically and emits JSON.
+    python_script = textwrap.dedent(
+        r"""
+import base64
+import ipaddress
 import json
 import os
+import pathlib
 import subprocess
 import tempfile
-import pathlib
 
-public_key = os.environ[\"PUBLIC_KEY\"].strip()
-wg_conf_path = os.environ.get(\"WG_CONF_PATH\", "/etc/wireguard/wg0.conf")
-client_subnet = ipaddress.ip_network(os.environ[\"CLIENT_SUBNET\"], strict=False)
-server_address = ipaddress.ip_address(os.environ[\"SERVER_ADDRESS\"])
-wg_interface = os.environ.get(\"WG_INTERFACE\", \"wg0\")
+public_key = base64.b64decode(os.environ["PUBLIC_KEY_B64"]).decode("utf-8").strip()
+wg_conf_path = os.environ.get("WG_CONF_PATH", "/etc/wireguard/wg0.conf")
+client_subnet = ipaddress.ip_network(os.environ["CLIENT_SUBNET"], strict=False)
+server_address = ipaddress.ip_address(os.environ["SERVER_ADDRESS"])
+wg_interface = os.environ.get("WG_INTERFACE", "wg0")
 
 if not public_key:
     raise SystemExit("Missing public key")
@@ -98,19 +96,14 @@ for section in sections:
             for host in network.hosts():
                 used_ips.add(host)
 
-result = {
-    "alreadyExists": False,
-    "assignedIp": None,
-    "presharedKey": None
-}
+result = {"alreadyExists": False, "assignedIp": None, "presharedKey": None}
 
 if existing_peer:
-    assigned = existing_peer["data"].get("AllowedIPs", "").split(",", 1)[0].strip()
+    allowed = existing_peer["data"].get("AllowedIPs", "").split(",", 1)[0].strip()
+    if allowed:
+        result["assignedIp"] = allowed.split("/", 1)[0]
     result["alreadyExists"] = True
-    if assigned:
-        result["assignedIp"] = assigned.split("/")[0]
-    preshared = existing_peer["data"].get("PreSharedKey")
-    result["presharedKey"] = preshared
+    result["presharedKey"] = existing_peer["data"].get("PreSharedKey")
 else:
     available_ip = None
     for host in client_subnet.hosts():
@@ -122,7 +115,12 @@ else:
         raise SystemExit(json.dumps({"error": "No available client IP addresses"}))
 
     assigned_ip = str(available_ip)
-    preshared_key = subprocess.run(["wg", "genpsk"], check=True, capture_output=True, text=True).stdout.strip()
+    preshared_key = subprocess.run(
+        ["wg", "genpsk"],
+        check=True,
+        capture_output=True,
+        text=True,
+    ).stdout.strip()
 
     with open(wg_conf_path, "a", encoding="utf-8") as fh:
         fh.write("\n[Peer]\n")
@@ -131,38 +129,65 @@ else:
         if preshared_key:
             fh.write(f"PreSharedKey = {preshared_key}\n")
 
-    subprocess.run(["wg", "set", wg_interface, "peer", public_key, "allowed-ips", f"{assigned_ip}/32"], check=True)
+    subprocess.run(
+        ["wg", "set", wg_interface, "peer", public_key, "allowed-ips", f"{assigned_ip}/32"],
+        check=True,
+    )
 
     if preshared_key:
         with tempfile.NamedTemporaryFile("w", delete=False) as tmp:
             tmp.write(preshared_key)
             temp_path = tmp.name
         try:
-            subprocess.run(["wg", "set", wg_interface, "peer", public_key, "preshared-key", temp_path], check=True)
+            subprocess.run(
+                ["wg", "set", wg_interface, "peer", public_key, "preshared-key", temp_path],
+                check=True,
+            )
         finally:
             pathlib.Path(temp_path).unlink(missing_ok=True)
 
     result["assignedIp"] = assigned_ip
     result["presharedKey"] = preshared_key
 
+try:
+    server_public_key = subprocess.run(
+        ["wg", "show", wg_interface, "public-key"],
+        check=True,
+        capture_output=True,
+        text=True,
+    ).stdout.strip()
+except subprocess.CalledProcessError:
+    server_public_key = ""
+
+result["publicKey"] = public_key
+result["serverPublicKey"] = server_public_key
+
 print(json.dumps(result))
 """
+    ).strip()
 
-    script = f"""
-set -euo pipefail
-export PUBLIC_KEY=$(cat <<'EOF'
-{sanitized_key}
-EOF
-)
-export WG_CONF_PATH='{wg_conf}'
-export CLIENT_SUBNET='{client_subnet}'
-export SERVER_ADDRESS='{server_address}'
-export WG_INTERFACE='{wg_interface}'
-python3 <<'PY'
-{python_script}
-PY
-"""
-    return [script]
+    encoded_script = base64.b64encode(python_script.encode("utf-8")).decode("ascii")
+    encoded_key = base64.b64encode(public_key.strip().encode("utf-8")).decode("ascii")
+
+    shell_script = textwrap.dedent(
+        f"""
+    /bin/bash <<'SCRIPT'
+    set -euo pipefail
+    export PUBLIC_KEY_B64='{encoded_key}'
+    export WG_CONF_PATH={shlex.quote(WG_CONF_PATH)}
+    export CLIENT_SUBNET={shlex.quote(CLIENT_SUBNET)}
+    export SERVER_ADDRESS={shlex.quote(SERVER_ADDRESS)}
+    export WG_INTERFACE={shlex.quote(WG_INTERFACE)}
+    python3 - <<'PY'
+    import base64
+    code = base64.b64decode('{encoded_script}')
+    exec(compile(code.decode('utf-8'), '<register_peer>', 'exec'), globals(), globals())
+    PY
+    SCRIPT
+    """
+    ).strip()
+
+    return [shell_script]
 
 
 def handler(event, context):
@@ -190,16 +215,25 @@ def handler(event, context):
             InstanceIds=[INSTANCE_ID],
             DocumentName="AWS-RunShellScript",
             Parameters={"commands": commands},
-            TimeoutSeconds=COMMAND_TIMEOUT
+            TimeoutSeconds=COMMAND_TIMEOUT,
         )
         command_id = command["Command"]["CommandId"]
 
         start = time.time()
         while True:
-            invocation = ssm.get_command_invocation(
-                CommandId=command_id,
-                InstanceId=INSTANCE_ID
-            )
+            try:
+                invocation = ssm.get_command_invocation(
+                    CommandId=command_id,
+                    InstanceId=INSTANCE_ID,
+                )
+            except ClientError as err:  # handle eventual consistency
+                code = err.response.get("Error", {}).get("Code")
+                if code == "InvocationDoesNotExist":
+                    if time.time() - start > COMMAND_TIMEOUT:
+                        raise TimeoutError("SSM command invocation not found before timeout")
+                    time.sleep(2)
+                    continue
+                raise
             status = invocation.get("Status")
             if status in {"Pending", "InProgress", "Delayed"}:
                 if time.time() - start > COMMAND_TIMEOUT:
@@ -211,7 +245,7 @@ def handler(event, context):
                 LOGGER.error("SSM command failed: %s", error_output)
                 return _response(500, {
                     "message": "Failed to register peer.",
-                    "error": error_output or status
+                    "error": error_output or status,
                 })
             output = invocation.get("StandardOutputContent") or "{}"
             break
@@ -222,25 +256,27 @@ def handler(event, context):
             LOGGER.error("Unable to parse SSM output: %s", output)
             return _response(500, {
                 "message": "Unexpected response from registration command.",
-                "rawOutput": output
+                "rawOutput": output,
             })
 
         response_body = {
             "message": "Peer registered." if not result.get("alreadyExists") else "Peer already registered.",
             "assignedIp": result.get("assignedIp"),
             "presharedKey": result.get("presharedKey"),
-            "alreadyExists": result.get("alreadyExists", False)
+            "alreadyExists": result.get("alreadyExists", False),
+            "publicKey": public_key,
+            "serverPublicKey": result.get("serverPublicKey"),
         }
         return _response(200, response_body)
     except (ClientError, TimeoutError) as exc:
         LOGGER.exception("Registration failed: %s", exc)
         return _response(500, {
             "message": "Failed to register peer.",
-            "error": str(exc)
+            "error": str(exc),
         })
     except Exception as exc:  # pylint: disable=broad-except
         LOGGER.exception("Unhandled error: %s", exc)
         return _response(500, {
             "message": "Unexpected error during registration.",
-            "error": str(exc)
+            "error": str(exc),
         })

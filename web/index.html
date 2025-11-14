@@ -151,13 +151,28 @@
             if (!error) {
                 return "Request failed.";
             }
+            let message;
             if (typeof error === "string") {
-                return error;
+                message = error;
+            } else if (error.message) {
+                message = error.message;
+            } else {
+                return JSON.stringify(error);
             }
-            if (error.message) {
-                return error.message;
+            if (typeof message === "string") {
+                const trimmed = message.trim();
+                if (trimmed.startsWith("<?xml")) {
+                    const codeMatch = trimmed.match(/<Code>([^<]+)<\/Code>/i);
+                    const msgMatch = trimmed.match(/<Message>([^<]+)<\/Message>/i);
+                    const code = codeMatch ? codeMatch[1] : "Error";
+                    const detail = msgMatch ? msgMatch[1] : "Access denied";
+                    return `${code}: ${detail}. Check that the API base URL points to the API Gateway invoke URL (including stage) instead of the CloudFront site URL.`;
+                }
+                if (trimmed.toLowerCase() === "forbidden") {
+                    return "Forbidden: verify that the API key and base URL exactly match the values provided by the administrator.";
+                }
             }
-            return JSON.stringify(error);
+            return message;
         }
 
         function updateResult(message, state = "info") {
@@ -199,7 +214,23 @@
                     body: bodyPayload
                 });
 
-                const json = await response.json();
+                let json;
+                try {
+                    const contentType = response.headers.get("content-type") || "";
+                    if (contentType.includes("application/json")) {
+                        json = await response.json();
+                    } else {
+                        const text = await response.text();
+                        try {
+                            json = JSON.parse(text);
+                        } catch (parseError) {
+                            json = { message: text };
+                        }
+                    }
+                } catch (parseError) {
+                    console.error("Failed to parse response", parseError);
+                    json = { message: "Response was not valid JSON." };
+                }
                 let message;
                 if (!response.ok) {
                     message = formatError(json.message || json.error || `Request failed with ${response.status}`);

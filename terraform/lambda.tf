@@ -98,6 +98,9 @@ resource "aws_lambda_function" "register_peer" {
   filename         = data.archive_file.register_peer.output_path
   source_code_hash = data.archive_file.register_peer.output_base64sha256
   timeout          = 120
+  tracing_config {
+    mode = "Active"
+  }
 
   environment {
     variables = local.lambda_env_register
