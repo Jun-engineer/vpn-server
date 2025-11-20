@@ -3,13 +3,13 @@ locals {
     Project = var.project_name
   }
 
-  timezone_name          = var.timezone_name
-  weekday_start_hour     = var.allowed_weekday_start_hour
-  weekday_end_hour       = var.allowed_weekday_end_hour
-  monitor_threshold_mb   = var.monitor_threshold_mb_per_hour
-  monitor_evaluation_hrs = var.monitor_evaluation_hours
-  monitor_period_seconds = var.monitor_period_seconds
-  wireguard_client_subnet = var.wireguard_client_subnet
+  timezone_name            = var.timezone_name
+  weekday_start_hour       = var.allowed_weekday_start_hour
+  weekday_end_hour         = var.allowed_weekday_end_hour
+  monitor_threshold_mb     = var.monitor_threshold_mb_per_hour
+  monitor_evaluation_hrs   = var.monitor_evaluation_hours
+  monitor_period_seconds   = var.monitor_period_seconds
+  wireguard_client_subnet  = var.wireguard_client_subnet
   wireguard_server_address = var.wireguard_server_address
   wireguard_interface_name = var.wireguard_interface_name
   wireguard_config_path    = var.wireguard_config_path
@@ -23,12 +23,12 @@ locals {
   vpn_private_ip = var.vpn_private_ip != "" ? var.vpn_private_ip : cidrhost(var.public_subnet_cidr, 10)
 
   lambda_env_common = {
-    INSTANCE_ID          = aws_instance.vpn.id
-    TIMEZONE             = local.timezone_name
-    WEEKDAY_START_HOUR   = tostring(local.weekday_start_hour)
-    WEEKDAY_END_HOUR     = tostring(local.weekday_end_hour)
-    MONITOR_THRESHOLD_MB = tostring(local.monitor_threshold_mb)
-    MONITOR_WINDOW_HRS   = tostring(local.monitor_evaluation_hrs)
+    INSTANCE_ID            = aws_instance.vpn.id
+    TIMEZONE               = local.timezone_name
+    WEEKDAY_START_HOUR     = tostring(local.weekday_start_hour)
+    WEEKDAY_END_HOUR       = tostring(local.weekday_end_hour)
+    MONITOR_THRESHOLD_MB   = tostring(local.monitor_threshold_mb)
+    MONITOR_WINDOW_HRS     = tostring(local.monitor_evaluation_hrs)
     MONITOR_PERIOD_SECONDS = tostring(local.monitor_period_seconds)
   }
 
@@ -39,4 +39,7 @@ locals {
     WG_CONF_PATH                = local.wireguard_config_path
     SSM_COMMAND_TIMEOUT_SECONDS = tostring(local.register_command_timeout)
   })
+
+  custom_domain_enabled = var.web_custom_domain != ""
+  cloudfront_aliases    = local.custom_domain_enabled ? [var.web_custom_domain] : []
 }

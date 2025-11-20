@@ -183,3 +183,9 @@ variable "allowed_api_burst" {
   type        = number
   default     = 10
 }
+
+variable "web_custom_domain" {
+  description = "Fully qualified domain name for the CloudFront distribution (leave blank to use the default domain)."
+  type        = string
+  default     = ""
+}

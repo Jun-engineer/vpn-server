@@ -12,7 +12,7 @@ resource "aws_cloudfront_function" "admin_basic_auth" {
   name    = "${var.project_name}-admin-basic-auth"
   runtime = "cloudfront-js-1.0"
   publish = true
-  code    = templatefile("${path.module}/../cloudfront/admin_basic_auth.js", {
+  code = templatefile("${path.module}/../cloudfront/admin_basic_auth.js", {
     basic_header = local.admin_basic_auth_header
   })
 }
@@ -47,40 +47,40 @@ resource "aws_s3_bucket_server_side_encryption_configuration" "web_ui" {
 resource "aws_s3_object" "web_ui_files" {
   for_each = {
     "index.html" = {
-      source = "${path.module}/../web/index.html"
+      source       = "${path.module}/../web/index.html"
       content_type = "text/html"
     }
     "admin.html" = {
-      source = "${path.module}/../web/admin.html"
+      source       = "${path.module}/../web/admin.html"
       content_type = "text/html"
     }
     "unavailable.html" = {
-      source = "${path.module}/../web/unavailable.html"
+      source       = "${path.module}/../web/unavailable.html"
       content_type = "text/html"
     }
     "styles.css" = {
-      source = "${path.module}/../web/styles.css"
+      source       = "${path.module}/../web/styles.css"
       content_type = "text/css"
     }
     "favicon.svg" = {
-      source = "${path.module}/../web/favicon.svg"
+      source       = "${path.module}/../web/favicon.svg"
       content_type = "image/svg+xml"
     }
     "favicon-32x32.png" = {
-      source = "${path.module}/../web/favicon-32x32.png"
+      source       = "${path.module}/../web/favicon-32x32.png"
       content_type = "image/png"
     }
     "favicon-16x16.png" = {
-      source = "${path.module}/../web/favicon-16x16.png"
+      source       = "${path.module}/../web/favicon-16x16.png"
       content_type = "image/png"
     }
   }
 
-  bucket       = aws_s3_bucket.web_ui.id
-  key          = each.key
-  source       = each.value.source
-  content_type = each.value.content_type
-  etag         = filemd5(each.value.source)
+  bucket        = aws_s3_bucket.web_ui.id
+  key           = each.key
+  source        = each.value.source
+  content_type  = each.value.content_type
+  etag          = filemd5(each.value.source)
   cache_control = "no-cache"
 
   depends_on = [
@@ -101,6 +101,7 @@ resource "aws_cloudfront_distribution" "web_ui" {
   is_ipv6_enabled     = true
   comment             = "Distribution for VPN control Web UI"
   default_root_object = "index.html"
+  aliases             = local.cloudfront_aliases
 
   origin {
     domain_name = aws_s3_bucket.web_ui.bucket_regional_domain_name
@@ -127,9 +128,9 @@ resource "aws_cloudfront_distribution" "web_ui" {
       }
     }
 
-    min_ttl                = 0
-    default_ttl            = 0
-    max_ttl                = 60
+    min_ttl     = 0
+    default_ttl = 0
+    max_ttl     = 60
 
     function_association {
       event_type   = "viewer-request"
@@ -144,7 +145,10 @@ resource "aws_cloudfront_distribution" "web_ui" {
   }
 
   viewer_certificate {
-    cloudfront_default_certificate = true
+    cloudfront_default_certificate = !local.custom_domain_enabled
+    acm_certificate_arn            = local.custom_domain_enabled ? aws_acm_certificate_validation.web_ui[0].certificate_arn : null
+    ssl_support_method             = local.custom_domain_enabled ? "sni-only" : null
+    minimum_protocol_version       = local.custom_domain_enabled ? "TLSv1.2_2021" : null
   }
 
   tags = local.tags
@@ -157,12 +161,12 @@ resource "aws_s3_bucket_policy" "web_ui" {
     Version = "2012-10-17"
     Statement = [
       {
-        Sid = "AllowCloudFrontServicePrincipalReadOnly"
+        Sid    = "AllowCloudFrontServicePrincipalReadOnly"
         Effect = "Allow"
         Principal = {
           Service = "cloudfront.amazonaws.com"
         }
-        Action = "s3:GetObject"
+        Action   = "s3:GetObject"
         Resource = "${aws_s3_bucket.web_ui.arn}/*"
         Condition = {
           StringEquals = {

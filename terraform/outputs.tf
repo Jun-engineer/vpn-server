@@ -33,6 +33,16 @@ output "cloudfront_domain_name" {
   value       = aws_cloudfront_distribution.web_ui.domain_name
 }
 
+output "web_custom_domain" {
+  description = "Custom domain mapped to the CloudFront distribution (if configured)."
+  value       = local.custom_domain_enabled ? var.web_custom_domain : null
+}
+
+output "web_custom_domain_name_servers" {
+  description = "Route53 name servers that must be configured at the registrar for the custom domain."
+  value       = local.custom_domain_enabled ? aws_route53_zone.web_ui[0].name_servers : []
+}
+
 output "ssh_key_pair_name" {
   description = "Name of the generated EC2 key pair for SSH access."
   value       = aws_key_pair.vpn.key_name

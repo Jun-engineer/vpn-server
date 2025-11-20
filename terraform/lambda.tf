@@ -29,13 +29,13 @@ data "archive_file" "register_peer" {
 }
 
 resource "aws_lambda_function" "start_instance" {
-  function_name = "${var.project_name}-start"
-  role          = aws_iam_role.lambda.arn
-  handler       = "start_instance.handler"
-  runtime       = "python3.12"
-  filename      = data.archive_file.start_instance.output_path
+  function_name    = "${var.project_name}-start"
+  role             = aws_iam_role.lambda.arn
+  handler          = "start_instance.handler"
+  runtime          = "python3.12"
+  filename         = data.archive_file.start_instance.output_path
   source_code_hash = data.archive_file.start_instance.output_base64sha256
-  timeout       = 30
+  timeout          = 30
 
   environment {
     variables = merge(local.lambda_env_common, {

@@ -12,7 +12,7 @@ resource "aws_scheduler_schedule" "weekday_stop" {
   target {
     arn      = aws_lambda_function.stop_instance.arn
     role_arn = aws_iam_role.scheduler.arn
-    input    = jsonencode({
+    input = jsonencode({
       trigger = "weekday-stop"
     })
   }
@@ -40,7 +40,7 @@ resource "aws_scheduler_schedule" "monitor" {
   target {
     arn      = aws_lambda_function.monitor_traffic.arn
     role_arn = aws_iam_role.scheduler.arn
-    input    = jsonencode({
+    input = jsonencode({
       trigger = "monitor"
     })
   }

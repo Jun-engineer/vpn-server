@@ -32,66 +32,66 @@ resource "aws_api_gateway_resource" "register" {
 }
 
 resource "aws_api_gateway_method" "start" {
-  rest_api_id   = aws_api_gateway_rest_api.vpn.id
-  resource_id   = aws_api_gateway_resource.start.id
-  http_method   = "POST"
-  authorization = "NONE"
+  rest_api_id      = aws_api_gateway_rest_api.vpn.id
+  resource_id      = aws_api_gateway_resource.start.id
+  http_method      = "POST"
+  authorization    = "NONE"
   api_key_required = true
 }
 
 resource "aws_api_gateway_method" "start_options" {
-  rest_api_id   = aws_api_gateway_rest_api.vpn.id
-  resource_id   = aws_api_gateway_resource.start.id
-  http_method   = "OPTIONS"
-  authorization = "NONE"
+  rest_api_id      = aws_api_gateway_rest_api.vpn.id
+  resource_id      = aws_api_gateway_resource.start.id
+  http_method      = "OPTIONS"
+  authorization    = "NONE"
   api_key_required = false
 }
 
 resource "aws_api_gateway_method" "stop" {
-  rest_api_id   = aws_api_gateway_rest_api.vpn.id
-  resource_id   = aws_api_gateway_resource.stop.id
-  http_method   = "POST"
-  authorization = "NONE"
+  rest_api_id      = aws_api_gateway_rest_api.vpn.id
+  resource_id      = aws_api_gateway_resource.stop.id
+  http_method      = "POST"
+  authorization    = "NONE"
   api_key_required = true
 }
 
 resource "aws_api_gateway_method" "stop_options" {
-  rest_api_id   = aws_api_gateway_rest_api.vpn.id
-  resource_id   = aws_api_gateway_resource.stop.id
-  http_method   = "OPTIONS"
-  authorization = "NONE"
+  rest_api_id      = aws_api_gateway_rest_api.vpn.id
+  resource_id      = aws_api_gateway_resource.stop.id
+  http_method      = "OPTIONS"
+  authorization    = "NONE"
   api_key_required = false
 }
 
 resource "aws_api_gateway_method" "status" {
-  rest_api_id   = aws_api_gateway_rest_api.vpn.id
-  resource_id   = aws_api_gateway_resource.status.id
-  http_method   = "GET"
-  authorization = "NONE"
+  rest_api_id      = aws_api_gateway_rest_api.vpn.id
+  resource_id      = aws_api_gateway_resource.status.id
+  http_method      = "GET"
+  authorization    = "NONE"
   api_key_required = true
 }
 
 resource "aws_api_gateway_method" "status_options" {
-  rest_api_id   = aws_api_gateway_rest_api.vpn.id
-  resource_id   = aws_api_gateway_resource.status.id
-  http_method   = "OPTIONS"
-  authorization = "NONE"
+  rest_api_id      = aws_api_gateway_rest_api.vpn.id
+  resource_id      = aws_api_gateway_resource.status.id
+  http_method      = "OPTIONS"
+  authorization    = "NONE"
   api_key_required = false
 }
 
 resource "aws_api_gateway_method" "register" {
-  rest_api_id   = aws_api_gateway_rest_api.vpn.id
-  resource_id   = aws_api_gateway_resource.register.id
-  http_method   = "POST"
-  authorization = "NONE"
+  rest_api_id      = aws_api_gateway_rest_api.vpn.id
+  resource_id      = aws_api_gateway_resource.register.id
+  http_method      = "POST"
+  authorization    = "NONE"
   api_key_required = true
 }
 
 resource "aws_api_gateway_method" "register_options" {
-  rest_api_id   = aws_api_gateway_rest_api.vpn.id
-  resource_id   = aws_api_gateway_resource.register.id
-  http_method   = "OPTIONS"
-  authorization = "NONE"
+  rest_api_id      = aws_api_gateway_rest_api.vpn.id
+  resource_id      = aws_api_gateway_resource.register.id
+  http_method      = "OPTIONS"
+  authorization    = "NONE"
   api_key_required = false
 }
 
@@ -374,8 +374,8 @@ resource "aws_api_gateway_stage" "prod" {
 }
 
 resource "aws_api_gateway_gateway_response" "default_4xx" {
-  rest_api_id    = aws_api_gateway_rest_api.vpn.id
-  response_type  = "DEFAULT_4XX"
+  rest_api_id   = aws_api_gateway_rest_api.vpn.id
+  response_type = "DEFAULT_4XX"
 
   response_parameters = {
     "gatewayresponse.header.Access-Control-Allow-Origin"  = "'*'",
@@ -385,8 +385,8 @@ resource "aws_api_gateway_gateway_response" "default_4xx" {
 }
 
 resource "aws_api_gateway_gateway_response" "default_5xx" {
-  rest_api_id    = aws_api_gateway_rest_api.vpn.id
-  response_type  = "DEFAULT_5XX"
+  rest_api_id   = aws_api_gateway_rest_api.vpn.id
+  response_type = "DEFAULT_5XX"
 
   response_parameters = {
     "gatewayresponse.header.Access-Control-Allow-Origin"  = "'*'",
