@@ -1,9 +1,6 @@
 locals {
   tags = {
-    Project     = var.project_name
-    Environment = "prod"
-    ManagedBy   = "Terraform"
-    Owner       = "Personal"
+    Project = var.project_name
   }
 
   timezone_name            = var.timezone_name
@@ -30,8 +27,8 @@ locals {
     TIMEZONE               = local.timezone_name
     WEEKDAY_START_HOUR     = tostring(local.weekday_start_hour)
     WEEKDAY_END_HOUR       = tostring(local.weekday_end_hour)
-    MONITOR_THRESHOLD_MB   = tostring(local.monitor_threshold_mb)
-    MONITOR_WINDOW_HRS     = tostring(local.monitor_evaluation_hrs)
+    MONITOR_THRESHOLD_MB   = tostring(local.monitor_threshold_mb_per_hour)
+    MONITOR_WINDOW_HRS     = tostring(local.monitor_evaluation_hours)
     MONITOR_PERIOD_SECONDS = tostring(local.monitor_period_seconds)
   }
 
