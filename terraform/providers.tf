@@ -25,7 +25,7 @@ provider "aws" {
 
   default_tags {
     tags = {
-      Project     = "VpnServer"
+      Project     = var.project_name
       Environment = "prod"
       ManagedBy   = "Terraform"
       Owner       = "Personal"
@@ -39,7 +39,7 @@ provider "aws" {
 
   default_tags {
     tags = {
-      Project     = "VpnServer"
+      Project     = var.project_name
       Environment = "prod"
       ManagedBy   = "Terraform"
       Owner       = "Personal"
