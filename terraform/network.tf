@@ -114,7 +114,6 @@ resource "aws_instance" "vpn" {
     volume_size = 30
     volume_type = "gp3"
     encrypted   = true
-    tags        = local.tags
   }
 
   tags = merge(local.tags, {
