@@ -11,8 +11,6 @@ LOGGER.setLevel(logging.INFO)
 
 INSTANCE_ID = os.environ["INSTANCE_ID"]
 TIMEZONE = ZoneInfo(os.environ.get("TIMEZONE", "UTC"))
-WEEKDAY_START_HOUR = int(os.environ.get("WEEKDAY_START_HOUR", 13))
-WEEKDAY_END_HOUR = int(os.environ.get("WEEKDAY_END_HOUR", 24))
 NOTIFICATION_TOPIC_ARN = os.environ.get("START_NOTIFICATION_TOPIC_ARN", "")
 
 DEFAULT_HEADERS = {
@@ -85,14 +83,6 @@ def handler(event, context):
     try:
         now = datetime.now(TIMEZONE)
         LOGGER.info("Start request received at %s", now.isoformat())
-
-        if now.weekday() < 5:
-            if not (WEEKDAY_START_HOUR <= now.hour < WEEKDAY_END_HOUR):
-                return _response(403, {
-                    "message": "VPN start is disabled until 13:00 Australia/Sydney on weekdays.",
-                    "currentHourLocal": now.hour,
-                    "allowedHoursLocal": [WEEKDAY_START_HOUR, WEEKDAY_END_HOUR]
-                })
 
         current_state = _current_state()
         LOGGER.info("Current instance state: %s", current_state)

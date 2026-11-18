@@ -36,9 +36,7 @@ def _mock_event(source_ip="198.51.100.10", user_agent="pytest"):
 @pytest.fixture
 def moto_environment(monkeypatch):
     _set_aws_test_credentials(monkeypatch)
-    monkeypatch.setenv("TIMEZONE", "UTC")
-    monkeypatch.setenv("WEEKDAY_START_HOUR", "0")
-    monkeypatch.setenv("WEEKDAY_END_HOUR", "24")
+    monkeypatch.setenv("TIMEZONE", "Australia/Sydney")
 
     with mock_ec2(), mock_sns():
         ec2_client = boto3.client("ec2")
@@ -64,38 +62,6 @@ def moto_environment(monkeypatch):
         yield module, ec2_client
 
 
-def test_start_denied_outside_window(monkeypatch, moto_environment):
-    module, ec2_client = moto_environment
-    module.WEEKDAY_START_HOUR = 13
-    module.WEEKDAY_END_HOUR = 18
-
-    class FrozenDateTime(real_datetime):
-        @classmethod
-        def now(cls, tz=None):
-            return real_datetime(2024, 1, 2, 3, tzinfo=tz)  # Tuesday 03:00
-
-    monkeypatch.setattr(module, "datetime", FrozenDateTime)
-
-    publish_calls = []
-    monkeypatch.setattr(
-        module,
-        "sns",
-        SimpleNamespace(publish=lambda **kwargs: publish_calls.append(kwargs))
-    )
-
-    response = module.handler(_mock_event(), None)
-    body = json.loads(response["body"])
-
-    assert response["statusCode"] == 403
-    assert "disabled" in body["message"].lower()
-    assert publish_calls == []
-
-    # Ensure instance state unchanged
-    reservations = ec2_client.describe_instances(InstanceIds=[os.environ["INSTANCE_ID"]])["Reservations"]
-    state = reservations[0]["Instances"][0]["State"]["Name"]
-    assert state == "running"
-
-
 def test_start_noop_when_running(monkeypatch, moto_environment):
     module, _ = moto_environment
 
@@ -114,8 +80,16 @@ def test_start_noop_when_running(monkeypatch, moto_environment):
     assert publish_calls == []
 
 
-def test_start_triggers_notification(monkeypatch, moto_environment):
+@pytest.mark.parametrize("day,hour,minute", [(2, 0, 0), (2, 3, 0), (2, 12, 59), (2, 13, 0), (6, 3, 0)])
+def test_start_triggers_notification_at_any_time(monkeypatch, moto_environment, day, hour, minute):
     module, ec2_client = moto_environment
+
+    class FrozenDateTime(real_datetime):
+        @classmethod
+        def now(cls, tz=None):
+            return real_datetime(2024, 1, day, hour, minute, tzinfo=tz)  # 2nd is Tuesday, 6th is Saturday
+
+    monkeypatch.setattr(module, "datetime", FrozenDateTime)
 
     # Stop instance so the handler issues a start
     ec2_client.stop_instances(InstanceIds=[os.environ["INSTANCE_ID"]])
@@ -132,8 +106,11 @@ def test_start_triggers_notification(monkeypatch, moto_environment):
 
     assert response["statusCode"] == 200
     assert body["state"] == "pending"
+    reservations = ec2_client.describe_instances(InstanceIds=[os.environ["INSTANCE_ID"]])["Reservations"]
+    assert reservations[0]["Instances"][0]["State"]["Name"] in {"pending", "running"}
     assert len(publish_calls) == 1
     assert publish_calls[0]["TopicArn"] == os.environ["START_NOTIFICATION_TOPIC_ARN"]
     message = json.loads(publish_calls[0]["Message"])
     assert message["instanceId"] == os.environ["INSTANCE_ID"]
-    assert "sourceIp" in message
+    assert message["sourceIp"] == "198.51.100.10"
+    assert message["timestamp"] == real_datetime(2024, 1, day, hour, minute, tzinfo=module.TIMEZONE).isoformat()

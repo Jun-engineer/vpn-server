@@ -11,7 +11,7 @@ variable "aws_region" {
 }
 
 variable "timezone_name" {
-  description = "Primary timezone for scheduling and access control."
+  description = "Timezone for scheduling and local timestamps."
   type        = string
   default     = "Australia/Sydney"
 }
@@ -56,18 +56,6 @@ variable "ssh_key_pair_name" {
   description = "Name for the generated EC2 key pair."
   type        = string
   default     = "vpn-server-tokyo-key"
-}
-
-variable "allowed_weekday_start_hour" {
-  description = "Hour in JST when non-admin users may start the VPN instance on weekdays."
-  type        = number
-  default     = 13
-}
-
-variable "allowed_weekday_end_hour" {
-  description = "Hour in JST after which the VPN instance should stop allowing starts (24 for end-of-day)."
-  type        = number
-  default     = 24
 }
 
 variable "monitor_schedule_expression" {
