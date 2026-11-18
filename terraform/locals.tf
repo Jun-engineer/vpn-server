@@ -4,8 +4,6 @@ locals {
   }
 
   timezone_name            = var.timezone_name
-  weekday_start_hour       = var.allowed_weekday_start_hour
-  weekday_end_hour         = var.allowed_weekday_end_hour
   monitor_threshold_mb     = var.monitor_threshold_mb_per_hour
   monitor_evaluation_hrs   = var.monitor_evaluation_hours
   monitor_period_seconds   = var.monitor_period_seconds
@@ -25,8 +23,6 @@ locals {
   lambda_env_common = {
     INSTANCE_ID            = aws_instance.vpn.id
     TIMEZONE               = local.timezone_name
-    WEEKDAY_START_HOUR     = tostring(local.weekday_start_hour)
-    WEEKDAY_END_HOUR       = tostring(local.weekday_end_hour)
     MONITOR_THRESHOLD_MB   = tostring(local.monitor_threshold_mb)
     MONITOR_WINDOW_HRS     = tostring(local.monitor_evaluation_hrs)
     MONITOR_PERIOD_SECONDS = tostring(local.monitor_period_seconds)

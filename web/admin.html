@@ -14,7 +14,7 @@
 <body>
     <main class="container">
         <h1>VPN Admin Console</h1>
-        <p class="hint">Administrative access bypasses the maintenance window. Limit distribution of this page and credentials.</p>
+        <p class="hint">Limit distribution of this page and credentials to trusted operators.</p>
 
         <section class="actions-block" aria-label="Admin actions">
             <div class="actions">
@@ -30,7 +30,7 @@
             <h2>How to operate</h2>
             <ol>
                 <li>Enter the API base URL and API key when prompted. Values are stored locally in your browser.</li>
-                <li><strong>Start VPN</strong> brings the instance online immediately, regardless of the public maintenance window.</li>
+                <li><strong>Start VPN</strong> requests that the instance start.</li>
                 <li><strong>Stop VPN</strong> issues a manual shutdown (auto-stop policies remain in effect).</li>
                 <li><strong>Check Status</strong> confirms the EC2 state and health checks; look for “VPN available”.</li>
                 <li>Use the registration form to onboard a new WireGuard client public key and capture the returned IP / preshared key.</li>

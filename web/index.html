@@ -28,7 +28,6 @@
         <section class="instructions" aria-label="Usage instructions">
             <h2>How to use this VPN controller</h2>
             <ol>
-                <li>Make sure you are outside the weekday maintenance window (weekdays after 13:00 Australia/Sydney or anytime on weekends). Otherwise you will be redirected to the unavailable page.</li>
                 <li>Click any action button. On first use you will be prompted for the API base URL and API key from Terraform outputs. These values remain in your browser only.</li>
                 <li>Use <strong>Start VPN</strong> when you need the server. After starting, select <strong>Check Status</strong> until the message switches from “VPN warming up…” to “VPN available”.</li>
                 <li>Auto-stop policies handle shutdowns, so there is no manual Stop button. Use <strong>Reset saved API details</strong> if you need to switch credentials.</li>
@@ -38,44 +37,10 @@
 
     <script>
         const CONFIG_KEY = "vpn-controller-config";
-        const TIMEZONE = "Australia/Sydney";
-        const WEEKDAY_START_HOUR = 13;
 
         const resultContainer = document.getElementById("result");
         const resetButton = document.getElementById("reset-config");
         const actionButtons = document.querySelectorAll("button[data-action]");
-
-        function getTimeInfo() {
-            const now = new Date();
-            const formatter = new Intl.DateTimeFormat("en-AU", {
-                timeZone: TIMEZONE,
-                weekday: "short",
-                hour: "numeric",
-                minute: "numeric",
-                hour12: false
-            });
-            const parts = formatter.formatToParts(now);
-            const weekday = parts.find((p) => p.type === "weekday").value;
-            const hour = parseInt(parts.find((p) => p.type === "hour").value, 10);
-            const isWeekend = weekday === "Sat" || weekday === "Sun";
-            return { isWeekend, hour };
-        }
-
-        function isServiceAvailable() {
-            const info = getTimeInfo();
-            if (info.isWeekend) {
-                return true;
-            }
-            return info.hour >= WEEKDAY_START_HOUR;
-        }
-
-        function enforceAvailability() {
-            if (!isServiceAvailable()) {
-                window.location.replace("unavailable.html");
-                return false;
-            }
-            return true;
-        }
 
         function readConfig() {
             try {
@@ -187,11 +152,6 @@
         }
 
         async function callApi(action, options = {}) {
-            if (action === "start" && !isServiceAvailable()) {
-                updateResult("Control is disabled until 13:00 Australia/Sydney on weekdays.", "error");
-                return { success: false, error: "Outside allowed window." };
-            }
-
             let config;
             try {
                 config = ensureConfig();
@@ -262,8 +222,6 @@
             localStorage.removeItem(CONFIG_KEY);
             updateResult("Saved API details cleared. Click a button to enter them again.", "info");
         });
-
-        enforceAvailability();
     </script>
 </body>
 </html>
