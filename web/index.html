@@ -4,8 +4,7 @@
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>VPN Server Control</title>
-    <script async src="https://pagead2.googlesyndication.com/pagead/js/adsbygoogle.js?client=ca-pub-5434162081070782"
-        crossorigin="anonymous"></script>
+    <script defer src="vpn-controller.js" data-api-base="${api_base_url}"></script>
     <link rel="icon" type="image/png" sizes="32x32" href="favicon-32x32.png?v=20251113">
     <link rel="icon" type="image/png" sizes="16x16" href="favicon-16x16.png?v=20251113">
     <link rel="shortcut icon" href="favicon.svg?v=20251113" type="image/svg+xml">
@@ -14,7 +13,7 @@
 <body>
     <main class="container">
         <h1>VPN Server Control</h1>
-        <p class="hint">Click a button to send a request. If needed, the page will ask once for the API URL and API key.</p>
+        <p class="hint">Click a button to send a request. If needed, the page will ask once for the API key.</p>
 
         <section class="actions-block" aria-label="VPN actions">
             <div class="actions">
@@ -23,205 +22,16 @@
             </div>
 
             <p id="result" class="result" aria-live="polite" data-state="info">Awaiting action...</p>
-            <button type="button" id="reset-config" class="link-button">Reset saved API details</button>
+            <button type="button" id="reset-config" class="link-button">Forget saved API key</button>
         </section>
         <section class="instructions" aria-label="Usage instructions">
             <h2>How to use this VPN controller</h2>
             <ol>
-                <li>Click any action button. On first use you will be prompted for the API base URL and API key from Terraform outputs. These values remain in your browser only.</li>
+                <li>Click any action button. On first use you will be prompted for your API key. The API URL is already configured, and the key is saved in this browser.</li>
                 <li>Use <strong>Start VPN</strong> when you need the server. After starting, select <strong>Check Status</strong> until the message switches from “VPN warming up…” to “VPN available”.</li>
-                <li>Auto-stop policies handle shutdowns, so there is no manual Stop button. Use <strong>Reset saved API details</strong> if you need to switch credentials.</li>
+                <li>Auto-stop policies handle shutdowns, so there is no manual Stop button. Use <strong>Forget saved API key</strong> if you need to switch credentials.</li>
             </ol>
         </section>
     </main>
-
-    <script>
-        const CONFIG_KEY = "vpn-controller-config";
-
-        const resultContainer = document.getElementById("result");
-        const resetButton = document.getElementById("reset-config");
-        const actionButtons = document.querySelectorAll("button[data-action]");
-
-        function readConfig() {
-            try {
-                const stored = localStorage.getItem(CONFIG_KEY);
-                return stored ? JSON.parse(stored) : {};
-            } catch (error) {
-                console.error("Failed to read stored config", error);
-                return {};
-            }
-        }
-
-        function ensureConfig() {
-            const config = readConfig();
-            if (config.role !== undefined) {
-                delete config.role;
-            }
-
-            if (!config.apiBase) {
-                const value = prompt("Enter the API base URL (e.g. https://abc123.execute-api.ap-northeast-1.amazonaws.com/prod)");
-                if (!value) {
-                    throw new Error("API base URL is required.");
-                }
-                config.apiBase = value.trim();
-            }
-
-            if (!config.apiKey) {
-                const value = prompt("Enter the API key provided by the administrator");
-                if (!value) {
-                    throw new Error("API key is required.");
-                }
-                config.apiKey = value.trim();
-            }
-
-            localStorage.setItem(CONFIG_KEY, JSON.stringify(config));
-            return config;
-        }
-
-        function formatStartResponse(response) {
-            const state = (response.state || "").toLowerCase();
-            if (state === "running") {
-                return "Server already running.";
-            }
-            if (state === "pending") {
-                return "Starting the server... (Press Check Status to confirm).";
-            }
-            if (response.message) {
-                return response.message;
-            }
-            return "Start request sent.";
-        }
-
-        function formatStatusResponse(response) {
-            const state = (response.state || "").toLowerCase();
-            if (state === "running") {
-                if (response.statusChecksPassed) {
-                    return "VPN available";
-                }
-                const systemStatus = (response.systemStatus || "initializing").toLowerCase();
-                const instanceStatus = (response.instanceStatus || "initializing").toLowerCase();
-                return `VPN warming up (system check: ${systemStatus}, instance check: ${instanceStatus})`;
-            }
-            if (state === "pending") {
-                return "VPN starting...";
-            }
-            if (state === "stopping") {
-                return "VPN stopping...";
-            }
-            if (state === "stopped") {
-                return "VPN not available";
-            }
-            return response.message || `Unknown state: ${response.state || "n/a"}`;
-        }
-
-        function formatError(error) {
-            if (!error) {
-                return "Request failed.";
-            }
-            let message;
-            if (typeof error === "string") {
-                message = error;
-            } else if (error.message) {
-                message = error.message;
-            } else {
-                return JSON.stringify(error);
-            }
-            if (typeof message === "string") {
-                const trimmed = message.trim();
-                if (trimmed.startsWith("<?xml")) {
-                    const codeMatch = trimmed.match(/<Code>([^<]+)<\/Code>/i);
-                    const msgMatch = trimmed.match(/<Message>([^<]+)<\/Message>/i);
-                    const code = codeMatch ? codeMatch[1] : "Error";
-                    const detail = msgMatch ? msgMatch[1] : "Access denied";
-                    return `${code}: ${detail}. Check that the API base URL points to the API Gateway invoke URL (including stage) instead of the CloudFront site URL.`;
-                }
-                if (trimmed.toLowerCase() === "forbidden") {
-                    return "Forbidden: verify that the API key and base URL exactly match the values provided by the administrator.";
-                }
-            }
-            return message;
-        }
-
-        function updateResult(message, state = "info") {
-            if (state) {
-                resultContainer.dataset.state = state;
-            } else {
-                delete resultContainer.dataset.state;
-            }
-            resultContainer.textContent = message;
-        }
-
-        async function callApi(action, options = {}) {
-            let config;
-            try {
-                config = ensureConfig();
-            } catch (error) {
-                updateResult(error.message, "error");
-                return;
-            }
-
-            updateResult("Sending request...", "working");
-
-            const endpoint = `${config.apiBase.replace(/\/$/, "")}/${action}`;
-            const method = action === "status" ? "GET" : "POST";
-            const bodyPayload = options.body ? JSON.stringify(options.body) : (method === "POST" ? JSON.stringify({ action }) : undefined);
-
-            try {
-                const response = await fetch(endpoint, {
-                    method,
-                    headers: {
-                        "Content-Type": "application/json",
-                        "x-api-key": config.apiKey
-                    },
-                    body: bodyPayload
-                });
-
-                let json;
-                try {
-                    const contentType = response.headers.get("content-type") || "";
-                    if (contentType.includes("application/json")) {
-                        json = await response.json();
-                    } else {
-                        const text = await response.text();
-                        try {
-                            json = JSON.parse(text);
-                        } catch (parseError) {
-                            json = { message: text };
-                        }
-                    }
-                } catch (parseError) {
-                    console.error("Failed to parse response", parseError);
-                    json = { message: "Response was not valid JSON." };
-                }
-                let message;
-                if (!response.ok) {
-                    message = formatError(json.message || json.error || `Request failed with ${response.status}`);
-                    updateResult(message, "error");
-                } else if (action === "start") {
-                    message = formatStartResponse(json);
-                    updateResult(message, "success");
-                } else {
-                    message = formatStatusResponse(json);
-                    const state = message.toLowerCase().includes("available") ? "success" : "info";
-                    updateResult(message, state);
-                }
-                return { success: response.ok, data: json };
-            } catch (error) {
-                console.error("API call failed", error);
-                const friendly = formatError(error);
-                updateResult(friendly, "error");
-                return { success: false, error: friendly };
-            }
-        }
-
-        actionButtons.forEach((button) => {
-            button.addEventListener("click", () => callApi(button.dataset.action));
-        });
-
-        resetButton.addEventListener("click", () => {
-            localStorage.removeItem(CONFIG_KEY);
-            updateResult("Saved API details cleared. Click a button to enter them again.", "info");
-        });
-    </script>
 </body>
 </html>
