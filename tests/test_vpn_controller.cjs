@@ -18,16 +18,20 @@ function button(action) {
     };
 }
 
-function page({ admin = false, storage = new Map(), apiBase = baseUrl, promptedKey = 'test-key', storageBlocked = false } = {}) {
+function page({ admin = false, storage = new Map(), apiBase = baseUrl, promptedKey = 'test-key', storageBlocked = false, confirmStop = true } = {}) {
     const result = { dataset: {} };
     const registerResult = { dataset: {}, classList: new Set() };
     const publicKey = { value: '' };
     const reset = button();
     const register = button();
-    const start = button('start');
-    const status = button('status');
-    const stop = button('stop');
+    const html = readFileSync(join(__dirname, '../web', admin ? 'admin.html' : 'index.html'), 'utf8');
+    const actions = Object.fromEntries(Array.from(html.matchAll(/<button\b[^>]*\bdata-action="([^"]+)"[^>]*>/g), ([tag, action]) => {
+        const actionButton = button(action);
+        if (/\sdata-confirm-stop\b/.test(tag)) actionButton.dataset.confirmStop = '';
+        return [action, actionButton];
+    }));
     const prompts = [];
+    const confirmations = [];
     const requests = [];
     const elements = {
         result,
@@ -43,14 +47,17 @@ function page({ admin = false, storage = new Map(), apiBase = baseUrl, promptedK
         document: {
             currentScript: { dataset: { apiBase } },
             getElementById: (id) => elements[id] ?? null,
-            querySelectorAll: () => admin ? [start, status, stop] : [start, status],
+            querySelectorAll: () => Object.values(actions),
         },
         localStorage: {
             getItem: (key) => access(() => storage.get(key) ?? null),
             setItem: (key, value) => access(() => storage.set(key, value)),
             removeItem: (key) => access(() => storage.delete(key)),
         },
-        window: { prompt: (text) => { prompts.push(text); return promptedKey; } },
+        window: {
+            prompt: (text) => { prompts.push(text); return promptedKey; },
+            confirm: (text) => { confirmations.push(text); return confirmStop; },
+        },
         fetch: async (url, options) => {
             requests.push({ url, options });
             return {
@@ -63,7 +70,7 @@ function page({ admin = false, storage = new Map(), apiBase = baseUrl, promptedK
             };
         },
     });
-    return { result, reset, start, status, stop, register, publicKey, registerResult, prompts, requests, reply };
+    return { result, reset, ...actions, register, publicKey, registerResult, prompts, confirmations, requests, reply };
 }
 
 test('both HTML templates load the shared script without an external script or an embedded key', () => {
@@ -94,12 +101,42 @@ test('first use asks only for the API key and the admin page reuses it', async (
     assert.equal(adminPage.requests[0].url, `${baseUrl}/stop`);
     assert.deepEqual(JSON.parse(adminPage.requests[0].options.body), { action: 'stop' });
     assert.equal(adminPage.prompts.length, 0);
+    assert.equal(adminPage.confirmations.length, 0);
     assert.equal(adminPage.requests[0].options.headers['x-api-key'], 'test-key');
     assert.equal(adminPage.result.dataset.state, 'working');
     adminPage.reset.click();
     assert.equal(storage.has(configKey), false);
     await publicPage.status.click();
     assert.equal(publicPage.prompts.length, 2);
+});
+
+test('normal page confirms a stop before sending the existing authenticated POST', async () => {
+    const controller = page();
+    controller.reply.data = { state: 'stopping' };
+    await controller.stop.click();
+
+    assert.equal(controller.confirmations.length, 1);
+    assert.match(controller.confirmations[0], /disconnect all connected devices/);
+    assert.equal(controller.requests.length, 1);
+    const [{ url, options }] = controller.requests;
+    assert.equal(url, `${baseUrl}/stop`);
+    assert.equal(options.method, 'POST');
+    assert.equal(options.headers['x-api-key'], 'test-key');
+    assert.deepEqual(JSON.parse(options.body), { action: 'stop' });
+    assert.equal(controller.result.dataset.state, 'working');
+    assert.match(controller.result.textContent, /^Stopping the server/);
+
+    controller.reply.data = { state: 'stopped' };
+    await controller.status.click();
+    assert.equal(controller.result.textContent, 'VPN not available');
+});
+
+test('cancelling stop on the normal page makes no request and does not ask for an API key', async () => {
+    const controller = page({ confirmStop: false });
+    await controller.stop.click();
+    assert.equal(controller.confirmations.length, 1);
+    assert.equal(controller.prompts.length, 0);
+    assert.equal(controller.requests.length, 0);
 });
 
 test('reuses the previous deployment format only when the API URL matches', async () => {

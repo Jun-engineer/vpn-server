@@ -1,16 +1,16 @@
 # VPN Server Auto-Control Platform
 
-This repository provisions an AWS-based automation stack that runs a WireGuard VPN server in the Tokyo region and exposes a lightweight Web UI for start/status operations, peer registration, and automated monitoring. Terraform creates the AWS resources, and the VPN can be started on demand at any time. The scheduled weekday midnight shutdown and low-traffic shutdowns remain in effect.
+This repository provisions an AWS-based automation stack that runs a WireGuard VPN server in the Tokyo region and exposes a lightweight Web UI for start, stop, and status operations, with an admin console for peer registration. Terraform creates the AWS resources, and the VPN can be started on demand at any time. The scheduled weekday midnight shutdown and low-traffic shutdowns remain in effect.
 
 ## Solution Highlights
 - **EC2 (default `t3a.small`)** launched from the configured AMI (`vpn_ami_id`, default `ami-0f52389a8648b923a`) with a 30 GB encrypted gp3 root volume and no additional user-data overrides.
 - **Dedicated networking stack** (new VPC, single public subnet, internet gateway, and route table) plus an ENI with an Elastic IP to keep the VPN’s public address stable across reboots.
 - **Managed SSH key pair** generated via Terraform and exposed as sensitive output for immediate download; the EC2 instance uses this key for admin access.
 - **Lambda functions (Python 3.12)** handling start, stop, status, peer-registration, and network-monitor workflows.
-- **API Gateway (REST)** exposing `/start`, `/status`, `/register`, and (optionally) `/stop` endpoints locked behind an API key.
+- **API Gateway (REST)** exposing `/start`, `/stop`, `/status`, and `/register` endpoints locked behind an API key.
 - **EventBridge Scheduler** jobs for weekday midnight shutdown and 15-minute traffic monitoring, both timezone-aware for Australia/Sydney.
 - **S3 + CloudFront** delivering a static HTML/CSS Web UI that interacts with the API.
-- **Admin console** served at `admin.html` for trusted operators who need manual stop and WireGuard peer registration.
+- **Admin console** served at `admin.html` for trusted operators, with WireGuard peer registration alongside the server controls.
 - **SNS notifications** fired whenever a manual start request is issued, with optional email subscriptions.
 - **IAM** kept minimal: Lambda receives only the permissions required for EC2 control, monitoring, and Systems Manager commands, while the VPN instance is attached to an `AmazonSSMManagedInstanceCore` profile for remote peer management.
 
@@ -94,10 +94,10 @@ web/                  # Static assets for the Web UI served via CloudFront
 
 ## Web UI Configuration
 1. Browse to the CloudFront domain from the Terraform output.
-2. `index.html` displays Start/Status buttons at any time. Terraform inserts the API Gateway invoke URL into both pages at deployment. On first use the page asks for the **API key** only. The key itself is never included in the published files.
-3. The result panel shows the response (e.g., “Server already running.” or “VPN warming up…”). The browser saves the key locally and shares it between the two pages on the same domain. Use **Forget saved API key** to clear it or enter a replacement.
-4. Administrators can browse to `<cloudfront-domain>/admin.html` to stop the VPN manually and register peers. The WireGuard registration form returns the allocated `/32` IP and generated preshared key—copy them into the client configuration.
-5. You will be prompted for the HTTP Basic credentials configured via `admin_basic_auth_username`/`admin_basic_auth_password`; share them (and the admin API key) only with trusted operators. Successful start requests emit an SNS notification (see Terraform outputs for the topic ARN).
+2. `index.html` displays **Start VPN**, **Stop VPN**, and **Check Status**. Terraform inserts the API Gateway invoke URL into both pages at deployment. The first request prompts for the **API key**, which is never included in the published files.
+3. **Stop VPN** asks for confirmation on `index.html` because a shutdown disconnects all VPN devices. After confirming, use **Check Status** to verify that the server has stopped. The result panel also reports the outcome of start and status requests.
+4. The browser saves the API key locally and shares it between the two pages on the same domain. Use **Forget saved API key** to clear it or enter a replacement.
+5. Trusted operators can open `<cloudfront-domain>/admin.html` to access the server controls and register peers. The page prompts for the HTTP Basic credentials configured via `admin_basic_auth_username`/`admin_basic_auth_password`. The registration form returns the allocated `/32` IP and generated preshared key for the client configuration.
 
 ## Running Tests
 
