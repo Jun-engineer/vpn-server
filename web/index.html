@@ -13,11 +13,12 @@
 <body>
     <main class="container">
         <h1>VPN Server Control</h1>
-        <p class="hint">Click a button to send a request. If needed, the page will ask once for the API key.</p>
+        <p class="hint">Choose an action to control the VPN. If needed, the page will ask once for the API key.</p>
 
         <section class="actions-block" aria-label="VPN actions">
             <div class="actions">
                 <button type="button" data-action="start">Start VPN</button>
+                <button type="button" data-action="stop" data-confirm-stop>Stop VPN</button>
                 <button type="button" data-action="status">Check Status</button>
             </div>
 
@@ -29,7 +30,8 @@
             <ol>
                 <li>Click any action button. On first use you will be prompted for your API key. The API URL is already configured, and the key is saved in this browser.</li>
                 <li>Use <strong>Start VPN</strong> when you need the server. After starting, select <strong>Check Status</strong> until the message switches from “VPN warming up…” to “VPN available”.</li>
-                <li>Auto-stop policies handle shutdowns, so there is no manual Stop button. Use <strong>Forget saved API key</strong> if you need to switch credentials.</li>
+                <li>Use <strong>Stop VPN</strong> to shut down the server. This disconnects everyone using the VPN. Select <strong>Check Status</strong> to confirm it has stopped. Auto-stop policies still apply.</li>
+                <li>Use <strong>Forget saved API key</strong> if you need to switch credentials.</li>
             </ol>
         </section>
     </main>

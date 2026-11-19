@@ -120,7 +120,14 @@
     }
 
     document.querySelectorAll("button[data-action]").forEach((button) => {
-        button.addEventListener("click", () => callApi(button.dataset.action));
+        button.addEventListener("click", () => {
+            const action = button.dataset.action;
+            if (action === "stop" && button.dataset.confirmStop !== undefined &&
+                !window.confirm("Stop the VPN server? This will disconnect all connected devices.")) {
+                return;
+            }
+            return callApi(action);
+        });
     });
 
     document.getElementById("register-peer")?.addEventListener("click", async () => {
