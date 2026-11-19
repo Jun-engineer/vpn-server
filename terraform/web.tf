@@ -44,16 +44,33 @@ resource "aws_s3_bucket_server_side_encryption_configuration" "web_ui" {
   }
 }
 
+resource "aws_s3_object" "vpn_controller" {
+  bucket        = aws_s3_bucket.web_ui.id
+  key           = "vpn-controller.js"
+  source        = "${path.module}/../web/vpn-controller.js"
+  content_type  = "application/javascript"
+  etag          = filemd5("${path.module}/../web/vpn-controller.js")
+  cache_control = "no-cache"
+
+  depends_on = [
+    aws_s3_bucket_ownership_controls.web_ui,
+    aws_s3_bucket_public_access_block.web_ui
+  ]
+}
+
+locals {
+  vpn_controller_pages = {
+    for name in ["index.html", "admin.html"] : name => {
+      content = templatefile("${path.module}/../web/${name}", {
+        api_base_url = aws_api_gateway_stage.prod.invoke_url
+      })
+      content_type = "text/html"
+    }
+  }
+}
+
 resource "aws_s3_object" "web_ui_files" {
-  for_each = {
-    "index.html" = {
-      source       = "${path.module}/../web/index.html"
-      content_type = "text/html"
-    }
-    "admin.html" = {
-      source       = "${path.module}/../web/admin.html"
-      content_type = "text/html"
-    }
+  for_each = merge(local.vpn_controller_pages, {
     "unavailable.html" = {
       source       = "${path.module}/../web/unavailable.html"
       content_type = "text/html"
@@ -74,18 +91,18 @@ resource "aws_s3_object" "web_ui_files" {
       source       = "${path.module}/../web/favicon-16x16.png"
       content_type = "image/png"
     }
-  }
+  })
 
   bucket        = aws_s3_bucket.web_ui.id
   key           = each.key
-  source        = each.value.source
+  source        = try(each.value.source, null)
+  content       = try(each.value.content, null)
   content_type  = each.value.content_type
-  etag          = filemd5(each.value.source)
+  etag          = try(md5(each.value.content), filemd5(each.value.source))
   cache_control = "no-cache"
 
   depends_on = [
-    aws_s3_bucket_ownership_controls.web_ui,
-    aws_s3_bucket_public_access_block.web_ui
+    aws_s3_object.vpn_controller
   ]
 }
 

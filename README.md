@@ -73,12 +73,14 @@ web/                  # Static assets for the Web UI served via CloudFront
    For an existing deployment, use its existing Terraform state and variable values. If the retired `allowed_weekday_start_hour` or `allowed_weekday_end_hour` inputs were explicitly set in a variable file, environment, or CLI arguments, remove them before planning.
 
 5. **Retrieve the API key value**
-   Terraform outputs the API key ID, not the actual secret value. To fetch it:
+   From `terraform/`, Terraform outputs the API key ID, not the secret value. Use the AWS CLI profile and region for this deployment to fetch the key:
    ```bash
-   aws apigateway get-api-key \
-     --api-key <api_key_id_from_outputs> \
-     --include-value
+   VPN_API_KEY_ID="$(terraform output -raw api_key_id)" &&
+     test -n "$VPN_API_KEY_ID" &&
+     aws apigateway get-api-key --api-key "$VPN_API_KEY_ID" \
+       --include-value --query value --output text
    ```
+   The command prints the secret. Save it in a password manager and keep it out of logs and screenshots.
 
 6. **Download the SSH private key**
    ```bash
@@ -92,10 +94,8 @@ web/                  # Static assets for the Web UI served via CloudFront
 
 ## Web UI Configuration
 1. Browse to the CloudFront domain from the Terraform output.
-2. `index.html` displays Start/Status buttons at any time. On the first click the page prompts for:
-   - **API base URL** (for example, `https://<api-id>.execute-api.ap-northeast-1.amazonaws.com/prod`).
-   - **API key** copied from API Gateway.
-3. After the prompts, the request runs and the response appears in the result panel (e.g., “Server already running.” or “VPN warming up…”). Details are saved to `localStorage`; use **Reset saved API details** to reconfigure.
+2. `index.html` displays Start/Status buttons at any time. Terraform inserts the API Gateway invoke URL into both pages at deployment. On first use the page asks for the **API key** only. The key itself is never included in the published files.
+3. The result panel shows the response (e.g., “Server already running.” or “VPN warming up…”). The browser saves the key locally and shares it between the two pages on the same domain. Use **Forget saved API key** to clear it or enter a replacement.
 4. Administrators can browse to `<cloudfront-domain>/admin.html` to stop the VPN manually and register peers. The WireGuard registration form returns the allocated `/32` IP and generated preshared key—copy them into the client configuration.
 5. You will be prompted for the HTTP Basic credentials configured via `admin_basic_auth_username`/`admin_basic_auth_password`; share them (and the admin API key) only with trusted operators. Successful start requests emit an SNS notification (see Terraform outputs for the topic ARN).
 
@@ -109,6 +109,8 @@ pytest
 ```
 
 The tests rely on `moto` to mock AWS services and cover the start handler during and outside the former blackout hours, the no-op for an already running instance, and SNS notifications.
+
+Run the Web UI tests from the repository root with `node --test tests/test_vpn_controller.cjs`. These use Node's built-in test runner and mock API responses without issuing requests to AWS.
 
 ## Lambda Behavior Summary
 - **start_instance**: Starts the instance on request at any time and returns the resulting instance state.
