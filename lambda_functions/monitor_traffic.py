@@ -1,131 +1,161 @@
+"""Fail-safe WireGuard peer-presence monitor.
+
+WireGuard does not expose a reliable tunnel disconnect event. Clients must set
+PersistentKeepalive = 25 for a fresh handshake to represent tunnel presence.
+This monitor is deliberately opt-in in Terraform until client configuration is
+verified. Any error fails open (the instance stays running).
+"""
+
 import json
 import logging
 import os
-from collections import defaultdict
-from datetime import datetime, timedelta, timezone
-from math import ceil
-from zoneinfo import ZoneInfo
+import re
+import shlex
+import time
+from datetime import datetime, timezone
 
 import boto3
+from botocore.exceptions import ClientError
 
 LOGGER = logging.getLogger()
 LOGGER.setLevel(logging.INFO)
 
 INSTANCE_ID = os.environ["INSTANCE_ID"]
-TIMEZONE = ZoneInfo(os.environ.get("TIMEZONE", "UTC"))
-THRESHOLD_MB = float(os.environ.get("MONITOR_THRESHOLD_MB", 1))
-WINDOW_HOURS = float(os.environ.get("MONITOR_WINDOW_HRS", 1.5))
-PERIOD_SECONDS = int(os.environ.get("MONITOR_PERIOD_SECONDS", 900))
-REQUIRED_POINTS = max(1, int(ceil((WINDOW_HOURS * 3600) / PERIOD_SECONDS)))
+WG_INTERFACE = os.environ.get("WG_INTERFACE", "wg0")
+IDLE_SECONDS = int(os.environ.get("AUTO_STOP_IDLE_SECONDS", "900"))
+SSM_TIMEOUT_SECONDS = 20
+SSM_POLL_SECONDS = 1
+RECHECK_DELAY_SECONDS = 5
 
-cloudwatch = boto3.client("cloudwatch")
 ec2 = boto3.client("ec2")
-
-DEFAULT_HEADERS = {
-    "Content-Type": "application/json",
-    "Access-Control-Allow-Origin": "*",
-    "Access-Control-Allow-Headers": "Content-Type,X-Api-Key",
-    "Access-Control-Allow-Methods": "OPTIONS,GET,POST"
-}
+ssm = boto3.client("ssm")
 
 
-def _response(status: int, data: dict) -> dict:
-    return {
-        "statusCode": status,
-        "headers": DEFAULT_HEADERS,
-        "body": json.dumps(data, ensure_ascii=False)
-    }
+def _response(message, **details):
+    return {"statusCode": 200, "body": json.dumps({"message": message, **details})}
 
 
-def _instance_is_running() -> bool:
-    status = ec2.describe_instances(InstanceIds=[INSTANCE_ID])
-    reservations = status.get("Reservations", [])
-    instances = [instance for r in reservations for instance in r.get("Instances", [])]
-    if not instances:
-        return False
-    return instances[0]["State"]["Name"] == "running"
+def _instance():
+    reservations = ec2.describe_instances(InstanceIds=[INSTANCE_ID]).get("Reservations", [])
+    instances = [item for reservation in reservations for item in reservation.get("Instances", [])]
+    if len(instances) != 1:
+        raise ValueError("Expected exactly one VPN EC2 instance")
+    instance = instances[0]
+    launch_time = instance["LaunchTime"]
+    if launch_time.tzinfo is None:
+        raise ValueError("EC2 LaunchTime must be timezone-aware")
+    return instance["State"]["Name"], launch_time.timestamp()
 
 
-def _collect_metrics(start: datetime, end: datetime) -> dict:
-    totals = defaultdict(float)
-    for metric_name in ("NetworkIn", "NetworkOut"):
-        response = cloudwatch.get_metric_statistics(
-            Namespace="AWS/EC2",
-            MetricName=metric_name,
-            Dimensions=[{"Name": "InstanceId", "Value": INSTANCE_ID}],
-            StartTime=start,
-            EndTime=end,
-            Period=PERIOD_SECONDS,
-            Statistics=["Sum"],
-            Unit="Bytes"
-        )
-        for datapoint in response.get("Datapoints", []):
-            totals[datapoint["Timestamp"]] += datapoint["Sum"]
-    return totals
+def _handshakes():
+    """Read only peer public keys and latest handshake epochs via SSM.
+
+    Never fetch 'wg show dump': that command includes the server private key.
+    """
+    if not re.fullmatch(r"[A-Za-z0-9_.-]{1,15}", WG_INTERFACE):
+        raise ValueError("Invalid WireGuard interface name")
+
+    command = ssm.send_command(
+        InstanceIds=[INSTANCE_ID],
+        DocumentName="AWS-RunShellScript",
+        Parameters={"commands": [
+            f"wg show {shlex.quote(WG_INTERFACE)} latest-handshakes"
+        ]},
+        TimeoutSeconds=SSM_TIMEOUT_SECONDS,
+    )
+    command_id = command["Command"]["CommandId"]
+    deadline = time.monotonic() + SSM_TIMEOUT_SECONDS
+    while time.monotonic() < deadline:
+        try:
+            result = ssm.get_command_invocation(
+                CommandId=command_id, InstanceId=INSTANCE_ID
+            )
+        except ClientError as exc:
+            if exc.response.get("Error", {}).get("Code") != "InvocationDoesNotExist":
+                raise
+            time.sleep(SSM_POLL_SECONDS)
+            continue
+
+        status = result.get("Status")
+        if status == "Success":
+            return _parse_handshakes(result.get("StandardOutputContent", ""))
+        if status in {"Failed", "Cancelled", "TimedOut", "Cancelling"}:
+            raise RuntimeError(f"SSM WireGuard probe failed: {status}")
+        if status not in {"Pending", "InProgress", "Delayed"}:
+            raise RuntimeError(f"Unknown SSM invocation status: {status}")
+        time.sleep(SSM_POLL_SECONDS)
+    raise TimeoutError("SSM WireGuard probe timed out")
+
+
+def _parse_handshakes(output):
+    """Return peer latest-handshake epochs; refuse incomplete or malformed output."""
+    if len(output) > 16000:
+        raise ValueError("WireGuard probe response unexpectedly large")
+    handshakes = {}
+    for line in output.splitlines():
+        columns = line.split()
+        if len(columns) != 2:
+            raise ValueError("Malformed wg latest-handshakes output")
+        public_key, raw_timestamp = columns
+        # WireGuard keys are 44-character base64 strings.
+        if not re.fullmatch(r"[A-Za-z0-9+/]{43}=", public_key):
+            raise ValueError("Unexpected WireGuard public key")
+        if public_key in handshakes or not raw_timestamp.isdecimal():
+            raise ValueError("Duplicate peer or malformed handshake timestamp")
+        handshakes[public_key] = int(raw_timestamp)
+    return handshakes
+
+
+def _is_safe_to_stop(launch_epoch, handshakes, now_epoch):
+    """Use the most recent handshake or launch as the earliest safe cutoff.
+
+    Assumes *all* active clients send keepalives; without them, silence is NOT
+    proof of disconnection. Refuse to act on future or suspicious timestamps.
+    """
+    if launch_epoch > now_epoch or IDLE_SECONDS < 900:
+        raise ValueError("Invalid launch time or auto-stop idle window")
+    last_seen = launch_epoch
+    for stamp in handshakes.values():
+        if stamp > now_epoch + 60:
+            raise ValueError("Future WireGuard handshake timestamp")
+        if stamp > 0:
+            last_seen = max(last_seen, stamp)
+    return now_epoch - last_seen >= IDLE_SECONDS
 
 
 def handler(event, context):
     try:
-        if not _instance_is_running():
-            LOGGER.info("Instance not running. Skipping traffic evaluation.")
-            return _response(200, {
-                "message": "Instance is not in a running state. No action taken.",
-                "timestampLocal": datetime.now(TIMEZONE).isoformat()
-            })
+        state, started = _instance()
+        if state != "running":
+            return _response("VPN is not running; no action", state=state)
 
-        end_time = datetime.now(timezone.utc)
-        start_time = end_time - timedelta(hours=WINDOW_HOURS)
-        metrics = _collect_metrics(start_time, end_time)
+        now = time.time()
+        if now - started < IDLE_SECONDS:
+            return _response("Start/restart grace period; no action")
 
-        if not metrics:
-            LOGGER.info("No traffic metrics available in window. Skipping auto-stop.")
-            return _response(200, {
-                "message": "No CloudWatch metrics found for evaluation window.",
-                "timestampLocal": datetime.now(TIMEZONE).isoformat()
-            })
+        first = _handshakes()
+        if not _is_safe_to_stop(started, first, time.time()):
+            LOGGER.info("VPN peer presence or startup grace detected; retaining instance.")
+            return _response("Recent peer handshake; instance retained", peerCount=len(first))
 
-        sorted_points = sorted(metrics.items(), key=lambda item: item[0])
-        evaluation = []
-        per_hour_factor = 3600 / PERIOD_SECONDS
-        for timestamp, total_bytes in sorted_points:
-            mb_transferred = total_bytes / (1024 * 1024)
-            mb_per_hour = mb_transferred * per_hour_factor
-            evaluation.append({
-                "timestamp": timestamp.isoformat(),
-                "megabytesPeriod": round(mb_transferred, 3),
-                "megabytesPerHour": round(mb_per_hour, 3)
-            })
+        # Two independent, successful probes before destructive action.
+        time.sleep(RECHECK_DELAY_SECONDS)
+        second = _handshakes()
+        state_again, started_again = _instance()
+        if state_again != "running" or started_again != started:
+            return _response("Instance changed state during probe; no action")
+        if set(second) != set(first):
+            return _response("Peer configuration changed during probe; no action")
+        if not _is_safe_to_stop(started, second, time.time()):
+            return _response("Peer became active during recheck; no action")
 
-        low_utilization = [item for item in evaluation if item["megabytesPerHour"] <= THRESHOLD_MB]
-        valid_points = evaluation[-REQUIRED_POINTS:]
-        should_stop = len(valid_points) >= REQUIRED_POINTS and all(item["megabytesPerHour"] <= THRESHOLD_MB for item in valid_points)
-
-        LOGGER.info("Evaluation results: %s", evaluation)
-        LOGGER.info("Low utilization periods: %s", low_utilization)
-
-        if should_stop:
-            LOGGER.info("Threshold satisfied. Issuing stop command.")
-            ec2.stop_instances(InstanceIds=[INSTANCE_ID])
-            return _response(200, {
-                "message": "Traffic remained below threshold. Stop command issued.",
-                "evaluation": evaluation,
-                "thresholdMbPerHour": THRESHOLD_MB,
-                "windowHours": WINDOW_HOURS,
-                "requiredPoints": REQUIRED_POINTS,
-                "timestampLocal": datetime.now(TIMEZONE).isoformat()
-            })
-
-        return _response(200, {
-            "message": "Traffic above threshold. Instance remains running.",
-            "evaluation": evaluation,
-            "thresholdMbPerHour": THRESHOLD_MB,
-            "windowHours": WINDOW_HOURS,
-            "requiredPoints": REQUIRED_POINTS,
-            "timestampLocal": datetime.now(TIMEZONE).isoformat()
-        })
-    except Exception as exc:
-        LOGGER.exception("Traffic monitor failed: %s", exc)
-        return _response(500, {
-            "message": "Failed to evaluate traffic metrics.",
-            "error": str(exc)
-        })
+        LOGGER.warning("No recent WireGuard handshakes for at least %s seconds; stopping %s",
+                       IDLE_SECONDS, INSTANCE_ID)
+        ec2.stop_instances(InstanceIds=[INSTANCE_ID])
+        return _response("VPN auto-stop requested after idle interval",
+                         peerCount=len(second), idleSeconds=IDLE_SECONDS)
+    except Exception:
+        # A missing SSM agent, WireGuard failure, clock skew, IAM error,
+        # malformed output, or Lambda timeout must never stop a live VPN.
+        LOGGER.exception("Unable to safely determine peer presence; skipping auto-stop")
+        return _response("WireGuard presence check unavailable; no action")

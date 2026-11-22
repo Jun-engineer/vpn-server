@@ -59,9 +59,9 @@ variable "ssh_key_pair_name" {
 }
 
 variable "monitor_schedule_expression" {
-  description = "EventBridge Scheduler cron expression (interpreted in timezone_name) for monitoring VPN traffic."
+  description = "Legacy input, ignored: peer presence is checked every minute when enable_peer_auto_stop=true."
   type        = string
-  default     = "cron(0/15 * * * ? *)"
+  default     = "rate(1 minute)"
 }
 
 variable "weekday_stop_cron_expression" {
@@ -71,19 +71,19 @@ variable "weekday_stop_cron_expression" {
 }
 
 variable "monitor_threshold_mb_per_hour" {
-  description = "Average combined network traffic threshold in MB per hour that triggers an automatic stop when undercut for the evaluation window."
+  description = "Deprecated input retained for backwards compatibility. No longer used for auto-stop."
   type        = number
   default     = 1
 }
 
 variable "monitor_evaluation_hours" {
-  description = "Number of trailing hours with low traffic required before the VPN instance is stopped automatically."
+  description = "Deprecated input retained for backwards compatibility. No longer used for auto-stop."
   type        = number
   default     = 1.5
 }
 
 variable "monitor_period_seconds" {
-  description = "CloudWatch metric period in seconds for traffic evaluation."
+  description = "Deprecated input retained for backwards compatibility. No longer used for auto-stop."
   type        = number
   default     = 900
 }
@@ -176,4 +176,23 @@ variable "web_custom_domain" {
   description = "Fully qualified domain name for the CloudFront distribution (leave blank to use the default domain)."
   type        = string
   default     = ""
+}
+
+# No server-side WireGuard API can prove a client has switched its tunnel OFF.
+# Keep disabled until every client is configured and tested with keepalives.
+variable "enable_peer_auto_stop" {
+  description = "Opt in to peer-presence auto-stop. REQUIRES PersistentKeepalive = 25 on ALL clients; default off to avoid disconnecting idle-but-connected users."
+  type        = bool
+  default     = false
+}
+
+variable "peer_auto_stop_idle_minutes" {
+  description = "Stop after this many minutes with no recent client handshakes. Keep at least 15 for safety."
+  type        = number
+  default     = 15
+
+  validation {
+    condition     = var.peer_auto_stop_idle_minutes >= 15 && floor(var.peer_auto_stop_idle_minutes) == var.peer_auto_stop_idle_minutes
+    error_message = "peer_auto_stop_idle_minutes must be an integer >= 15."
+  }
 }

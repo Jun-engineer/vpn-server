@@ -1,6 +1,6 @@
 # VPN Server Auto-Control Platform
 
-This repository provisions an AWS-based automation stack that runs a WireGuard VPN server in the Tokyo region and exposes a lightweight Web UI for start, stop, and status operations, with an admin console for peer registration. Terraform creates the AWS resources, and the VPN can be started on demand at any time. Automatic shutdowns are disabled: the instance stays running until explicitly stopped from the UI, API, or AWS (or due to an external infrastructure event).
+This repository provisions an AWS-based automation stack that runs a WireGuard VPN server in the Tokyo region and exposes a lightweight Web UI for start, stop, and status operations, with an admin console for peer registration. Terraform creates the AWS resources, and the VPN can be started on demand at any time. Weekday midnight shutdown remains disabled. An opt-in 15-minute WireGuard peer-presence monitor is available, but **disabled by default** until every client is configured and verified with persistent keepalives.
 
 ## Solution Highlights
 - **EC2 (default `t3a.small`)** launched from the configured AMI (`vpn_ami_id`, default `ami-0f52389a8648b923a`) with a 30 GB encrypted gp3 root volume and no additional user-data overrides.
@@ -8,7 +8,7 @@ This repository provisions an AWS-based automation stack that runs a WireGuard V
 - **Managed SSH key pair** generated via Terraform and exposed as sensitive output for immediate download; the EC2 instance uses this key for admin access.
 - **Lambda functions (Python 3.12)** handling start, stop, status, peer-registration, and network-monitor workflows.
 - **API Gateway (REST)** exposing `/start`, `/stop`, `/status`, and `/register` endpoints locked behind an API key.
-- **EventBridge Scheduler** retains the former weekday midnight shutdown and 15-minute low-traffic monitor schedules in a **DISABLED** state. Neither automatically stops the instance.
+- **EventBridge Scheduler** keeps the weekday midnight shutdown **DISABLED**. The former low-traffic schedule has been replaced with an opt-in 1-minute WireGuard handshake check. It remains **DISABLED by default** until validated.
 - **S3 + CloudFront** delivering a static HTML/CSS Web UI that interacts with the API.
 - **Admin console** served at `admin.html` for trusted operators, with WireGuard peer registration alongside the server controls.
 - **SNS notifications** fired whenever a manual start request is issued, with optional email subscriptions.
@@ -23,7 +23,7 @@ This repository provisions an AWS-based automation stack that runs a WireGuard V
       |    \           | | | |
    |     > start_instance / stop_instance / check_status / register_peer / monitor_traffic
       v
-[Amazon EventBridge Scheduler]  (both auto-stop schedules DISABLED)
+[Amazon EventBridge Scheduler] (weekday shutdown OFF; peer monitor opt-in)
       |
       v
 [EC2 WireGuard VPN]
@@ -81,7 +81,7 @@ web/                  # Static assets for the Web UI served via CloudFront
    aws scheduler get-schedule --region ap-northeast-1 \
      --name vpn-server-tokyo-monitor --query State --output text
    ```
-   Both must print `DISABLED`. This does **not** start a currently stopped instance; use **Start VPN** when needed.
+   With the default configuration, both print `DISABLED`. After intentionally enabling peer monitoring, the weekday schedule should print `DISABLED` and the monitor should print `ENABLED`. This does **not** start a currently stopped instance; use **Start VPN** when needed.
 
 5. **Retrieve the API key value**
    From `terraform/`, Terraform outputs the API key ID, not the secret value. Use the AWS CLI profile and region for this deployment to fetch the key:
@@ -128,11 +128,37 @@ Run the Web UI tests from the repository root with `node --test tests/test_vpn_c
 - **stop_instance**: Stops the instance only when explicitly invoked through the API/UI (or by a direct, authorized AWS action). The former weekday midnight schedule is disabled. Idempotent when already stopping or stopped.
 - **check_status**: Reports instance state, IPs, and the latest EC2 system/instance status checks, marking the VPN as available only after both checks pass, with timestamps in Australia/Sydney time.
 - **register_peer**: Accepts a WireGuard public key, allocates the next free `/32` in the configured client CIDR, updates `/etc/wireguard/wg0.conf` through AWS Systems Manager, and returns the assigned IP plus a generated preshared key.
-- **monitor_traffic**: Retained for possible future use but **not scheduled**. Its former 15-minute EventBridge schedule is disabled, so low traffic never triggers an automatic shutdown in normal operation.
+- **monitor_traffic**: Checks WireGuard `latest-handshakes` over AWS Systems Manager once per minute **only if explicitly enabled**. After at least 15 minutes since the latest client handshake (or instance startup if no client has connected), it probes again, checks the EC2 instance is still the same running boot, and then requests stop. All errors skip shutdown.
 
 ## Shutdown policy
 
-The VPN has **no automatic time limit and no scheduled idle-traffic shutdown**. It continues running (and incurring EC2 charges) until a user selects **Stop VPN** or an external action stops it. The two disabled EventBridge schedules remain Terraform-managed so future applies do not accidentally restore them. To re-enable either policy would require an intentional configuration change and deployment.
+**Default: manual-only.** No midnight cutoff. No traffic-volume shutdown. An optional peer-presence policy is available with `enable_peer_auto_stop = true`, after client setup and verification as described below. All schedules remain Terraform-managed.
+
+### Optional 15-minute automatic stop (requires client setup)
+
+**Important limitation:** WireGuard is connectionless. The server **cannot tell that the VPN switch was turned OFF**. `wg show wg0 latest-handshakes` reports the last successful handshake, not the client's actual UI state. A client that is ON but silent can look disconnected and be interrupted. For this reason, the monitor is **off by default** and must NOT be enabled before configuring and testing **every** phone, laptop, and other client. Even with keepalives, mobile OS sleep/power-saving/network interruptions can suppress traffic; this is an approximation, never a guaranteed disconnect detector.
+
+1. On **each client** (iOS WireGuard, Android, Windows, Mac), open its VPN tunnel configuration and add or verify the following option in the `[Peer]` block (the block that contains the **server** `PublicKey` and `Endpoint`, NOT the server's own configuration):
+
+   ```ini
+   [Peer]
+   PublicKey = <server-public-key>
+   Endpoint = <vpn-ip-or-domain>:51820
+   AllowedIPs = 0.0.0.0/0
+   PersistentKeepalive = 25
+   ```
+
+   This is only an illustrative excerpt; **keep the client's existing PublicKey, Endpoint, AllowedIPs, and other settings unchanged**. Save the configuration and reactivate its tunnel. For QR-imported profiles, edit the client profile itself; configuring the server cannot set a client's keepalive behavior.
+
+2. Start the VPN server and keep a client connected **without browsing for more than 15 minutes**. In AWS Systems Manager Run Command, execute `wg show wg0 latest-handshakes` on the EC2 instance twice several minutes apart. The epoch timestamp of the connected peer should advance periodically. If it does not, **do not enable auto-stop**. Repeat for every client, including with the phone screen locked/backgrounded.
+3. From the **existing production Terraform state and variable values**, opt in with `enable_peer_auto_stop = true` (for example, in a production `terraform.tfvars`) and leave `peer_auto_stop_idle_minutes = 15`. Run `terraform plan` first, confirm only intended in-place changes, and run `terraform apply`. Verify `vpn-server-tokyo-weekday-stop` stays `DISABLED`, and `vpn-server-tokyo-monitor` becomes `ENABLED`.
+4. Test **all clients connected** (no stop), **all tunnels OFF** (stop roughly 15–16 minutes after the last successful handshake), **reconnection before cutoff** (no stop), and **SSM not available** (no stop). The stopped VPN can be restarted from the existing Web UI. The monitoring interval and SSM command latency mean the shutdown is **not an exact 15-minute deadline**.
+5. If a connected device is incorrectly stopped, immediately set `enable_peer_auto_stop = false` and apply, or disable `vpn-server-tokyo-monitor` in the AWS EventBridge Scheduler console while investigating.
+
+**Fail-safe protections:** no automatic stop during the first 15 minutes after EC2 starts; no stop when a recent handshake exists; a second independent SSM check and EC2 boot/state check before stop; no stop when a peer gets added/removed during the check; no stop after malformed output, missing WireGuard interface, SSM failures/timeouts, clock anomalies, or IAM errors; no private keys are retrieved in the probe. A brief reconnect **after** the last recheck and just before the AWS stop request can still race with shutdown; this is not a hard guarantee. Manual Start/Stop/Status and peer-registration continue to work.
+
+**Operational note:** Keepalives generate small periodic packets and additional handshakes. If any client is configured to remain always-on and sends keepalives continuously, the instance will deliberately remain running (and billable). Disconnect the last client tunnel when finished if you want the 15-minute shutdown.
+
 
 ## Cleanup
 To remove all resources, run:
