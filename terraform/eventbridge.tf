@@ -1,5 +1,6 @@
-# Automatic shutdown schedules are deliberately kept DISABLED.
-# The VPN stays running until a user explicitly stops it (or AWS intervenes).
+# The old weekday midnight shutdown remains disabled.
+# Opt-in peer-presence monitoring requires PersistentKeepalive on every client.
+# Do not enable until all active clients have been verified.
 resource "aws_scheduler_schedule" "weekday_stop" {
   name                         = "${var.project_name}-weekday-stop"
   description                  = "Former weekday midnight auto-stop (disabled; VPN stops manually)"
@@ -30,10 +31,10 @@ resource "aws_lambda_permission" "scheduler_weekday_stop" {
 
 resource "aws_scheduler_schedule" "monitor" {
   name                         = "${var.project_name}-monitor"
-  description                  = "Former low-traffic auto-stop monitor (disabled; VPN stops manually)"
-  schedule_expression          = var.monitor_schedule_expression
+  description                  = "Opt-in 15-minute WireGuard peer-presence auto-stop"
+  schedule_expression          = "rate(1 minute)"
   schedule_expression_timezone = local.timezone_name
-  state                        = "DISABLED"
+  state                        = var.enable_peer_auto_stop ? "ENABLED" : "DISABLED"
 
   flexible_time_window {
     mode = "OFF"
