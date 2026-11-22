@@ -85,7 +85,8 @@ resource "aws_lambda_function" "monitor_traffic" {
 
   environment {
     variables = merge(local.lambda_env_common, {
-      AUTO_STOP_SOURCE = "monitor"
+      WG_INTERFACE           = local.wireguard_interface_name
+      AUTO_STOP_IDLE_SECONDS = tostring(var.peer_auto_stop_idle_minutes * 60)
     })
   }
 }
