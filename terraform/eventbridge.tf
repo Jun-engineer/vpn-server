@@ -1,9 +1,11 @@
+# Automatic shutdown schedules are deliberately kept DISABLED.
+# The VPN stays running until a user explicitly stops it (or AWS intervenes).
 resource "aws_scheduler_schedule" "weekday_stop" {
   name                         = "${var.project_name}-weekday-stop"
-  description                  = "Stop the VPN instance at midnight on weekdays"
+  description                  = "Former weekday midnight auto-stop (disabled; VPN stops manually)"
   schedule_expression          = var.weekday_stop_cron_expression
   schedule_expression_timezone = local.timezone_name
-  state                        = "ENABLED"
+  state                        = "DISABLED"
 
   flexible_time_window {
     mode = "OFF"
@@ -28,10 +30,10 @@ resource "aws_lambda_permission" "scheduler_weekday_stop" {
 
 resource "aws_scheduler_schedule" "monitor" {
   name                         = "${var.project_name}-monitor"
-  description                  = "Evaluate network traffic for the VPN instance"
+  description                  = "Former low-traffic auto-stop monitor (disabled; VPN stops manually)"
   schedule_expression          = var.monitor_schedule_expression
   schedule_expression_timezone = local.timezone_name
-  state                        = "ENABLED"
+  state                        = "DISABLED"
 
   flexible_time_window {
     mode = "OFF"
