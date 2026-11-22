@@ -70,7 +70,7 @@ def monitor(monkeypatch):
     return module
 
 
-def setup(monitor, monkeypatch, outputs, launch_age=3600):
+def setup_fakes(monitor, monkeypatch, outputs, launch_age=3600):
     ec2 = FakeEc2(launch_age)
     ssm = FakeSsm(outputs)
     monkeypatch.setattr(monitor, "ec2", ec2)
@@ -79,14 +79,14 @@ def setup(monitor, monkeypatch, outputs, launch_age=3600):
 
 
 def test_recent_handshake_keeps_instance_running(monitor, monkeypatch):
-    ec2, ssm = setup(monitor, monkeypatch, [f"{PEER}\t{NOW-60}\n"])
+    ec2, ssm = setup_fakes(monitor, monkeypatch, [f"{PEER}\t{NOW-60}\n"])
     assert "retained" in read_body(monitor.handler({}, None))["message"]
     assert not ec2.stops
     assert ssm.calls == 1
 
 
 def test_stale_handshake_stops_after_two_probes(monitor, monkeypatch):
-    ec2, ssm = setup(monitor, monkeypatch,
+    ec2, ssm = setup_fakes(monitor, monkeypatch,
                      [f"{PEER}\t{NOW-901}\n", f"{PEER}\t{NOW-901}\n"])
     assert "auto-stop requested" in read_body(monitor.handler({}, None))["message"]
     assert len(ec2.stops) == 1
@@ -94,7 +94,7 @@ def test_stale_handshake_stops_after_two_probes(monitor, monkeypatch):
 
 
 def test_recheck_detects_reconnection(monitor, monkeypatch):
-    ec2, ssm = setup(monitor, monkeypatch,
+    ec2, ssm = setup_fakes(monitor, monkeypatch,
                      [f"{PEER}\t{NOW-901}\n", f"{PEER}\t{NOW-3}\n"])
     assert "Peer became active" in read_body(monitor.handler({}, None))["message"]
     assert ssm.calls == 2
@@ -102,7 +102,7 @@ def test_recheck_detects_reconnection(monitor, monkeypatch):
 
 
 def test_new_peer_registration_aborts_stop(monitor, monkeypatch):
-    ec2, _ = setup(monitor, monkeypatch,
+    ec2, _ = setup_fakes(monitor, monkeypatch,
                    [f"{PEER}\t{NOW-901}\n",
                     f"{PEER}\t{NOW-901}\n{OTHER_PEER}\t0\n"])
     assert "configuration changed" in read_body(monitor.handler({}, None))["message"]
@@ -110,14 +110,14 @@ def test_new_peer_registration_aborts_stop(monitor, monkeypatch):
 
 
 def test_startup_grace_prevents_premature_shutdown(monitor, monkeypatch):
-    ec2, ssm = setup(monitor, monkeypatch, [], launch_age=500)
+    ec2, ssm = setup_fakes(monitor, monkeypatch, [], launch_age=500)
     assert "grace" in read_body(monitor.handler({}, None))["message"]
     assert ssm.calls == 0
     assert not ec2.stops
 
 
 def test_unconfigured_server_stops_after_grace(monitor, monkeypatch):
-    ec2, ssm = setup(monitor, monkeypatch, ["", ""])
+    ec2, ssm = setup_fakes(monitor, monkeypatch, ["", ""])
     read_body(monitor.handler({}, None))
     assert ssm.calls == 2
     assert len(ec2.stops) == 1
@@ -125,32 +125,32 @@ def test_unconfigured_server_stops_after_grace(monitor, monkeypatch):
 
 @pytest.mark.parametrize("bad_result", [None, "truncated_or_invalid"])
 def test_failed_or_malformed_probe_fails_open(monitor, monkeypatch, bad_result):
-    ec2, _ = setup(monitor, monkeypatch, [bad_result])
+    ec2, _ = setup_fakes(monitor, monkeypatch, [bad_result])
     assert "no action" in read_body(monitor.handler({}, None))["message"]
     assert not ec2.stops
 
 
 def test_second_probe_failure_fails_open(monitor, monkeypatch):
-    ec2, _ = setup(monitor, monkeypatch, [f"{PEER}\t0\n", None])
+    ec2, _ = setup_fakes(monitor, monkeypatch, [f"{PEER}\t0\n", None])
     assert "no action" in read_body(monitor.handler({}, None))["message"]
     assert not ec2.stops
 
 
 def test_stopped_instance_is_never_stopped_again(monitor, monkeypatch):
-    ec2, ssm = setup(monitor, monkeypatch, [])
+    ec2, ssm = setup_fakes(monitor, monkeypatch, [])
     ec2.state = "stopped"
     assert read_body(monitor.handler({}, None))["state"] == "stopped"
     assert ssm.calls == 0
 
 
 def test_future_handshake_fails_open(monitor, monkeypatch):
-    ec2, _ = setup(monitor, monkeypatch, [f"{PEER}\t{NOW+1000}\n"])
+    ec2, _ = setup_fakes(monitor, monkeypatch, [f"{PEER}\t{NOW+1000}\n"])
     assert "no action" in read_body(monitor.handler({}, None))["message"]
     assert not ec2.stops
 
 
 def test_launch_changed_during_recheck_does_not_stop(monitor, monkeypatch):
-    ec2, ssm = setup(monitor, monkeypatch, ["", ""])
+    ec2, ssm = setup_fakes(monitor, monkeypatch, ["", ""])
     original = monitor._handshakes
 
     def changed_boot():
