@@ -1,6 +1,6 @@
 # VPN Server Auto-Control Platform
 
-This repository provisions an AWS-based automation stack that runs a WireGuard VPN server in the Tokyo region and exposes a lightweight Web UI for start, stop, and status operations, with an admin console for peer registration. Terraform creates the AWS resources, and the VPN can be started on demand at any time. The scheduled weekday midnight shutdown and low-traffic shutdowns remain in effect.
+This repository provisions an AWS-based automation stack that runs a WireGuard VPN server in the Tokyo region and exposes a lightweight Web UI for start, stop, and status operations, with an admin console for peer registration. Terraform creates the AWS resources, and the VPN can be started on demand at any time. Automatic shutdowns are disabled: the instance stays running until explicitly stopped from the UI, API, or AWS (or due to an external infrastructure event).
 
 ## Solution Highlights
 - **EC2 (default `t3a.small`)** launched from the configured AMI (`vpn_ami_id`, default `ami-0f52389a8648b923a`) with a 30 GB encrypted gp3 root volume and no additional user-data overrides.
@@ -8,7 +8,7 @@ This repository provisions an AWS-based automation stack that runs a WireGuard V
 - **Managed SSH key pair** generated via Terraform and exposed as sensitive output for immediate download; the EC2 instance uses this key for admin access.
 - **Lambda functions (Python 3.12)** handling start, stop, status, peer-registration, and network-monitor workflows.
 - **API Gateway (REST)** exposing `/start`, `/stop`, `/status`, and `/register` endpoints locked behind an API key.
-- **EventBridge Scheduler** jobs for weekday midnight shutdown and 15-minute traffic monitoring, both timezone-aware for Australia/Sydney.
+- **EventBridge Scheduler** retains the former weekday midnight shutdown and 15-minute low-traffic monitor schedules in a **DISABLED** state. Neither automatically stops the instance.
 - **S3 + CloudFront** delivering a static HTML/CSS Web UI that interacts with the API.
 - **Admin console** served at `admin.html` for trusted operators, with WireGuard peer registration alongside the server controls.
 - **SNS notifications** fired whenever a manual start request is issued, with optional email subscriptions.
@@ -23,7 +23,7 @@ This repository provisions an AWS-based automation stack that runs a WireGuard V
       |    \           | | | |
    |     > start_instance / stop_instance / check_status / register_peer / monitor_traffic
       v
-[Amazon EventBridge Scheduler]  (scheduled stop + traffic checks)
+[Amazon EventBridge Scheduler]  (both auto-stop schedules DISABLED)
       |
       v
 [EC2 WireGuard VPN]
@@ -70,7 +70,18 @@ web/                  # Static assets for the Web UI served via CloudFront
    Confirm the run and wait until all resources finish provisioning. The outputs include the API invoke URL, the CloudFront domain, and the EC2 instance ID.
    If you supplied `start_notification_emails`, check your email for the SNS subscription confirmation message and confirm it to begin receiving alerts.
 
-   For an existing deployment, use its existing Terraform state and variable values. If the retired `allowed_weekday_start_hour` or `allowed_weekday_end_hour` inputs were explicitly set in a variable file, environment, or CLI arguments, remove them before planning.
+   For an existing deployment, use its **existing Terraform state and variable values**. Do not initialize a new state or deploy over the existing stack with defaults that differ from production. If the retired `allowed_weekday_start_hour` or `allowed_weekday_end_hour` inputs were explicitly set in a variable file, environment, or CLI arguments, remove them before planning.
+
+   **Important: merging this change does not update AWS.** Run `terraform plan` and `terraform apply` against the existing state. Verify that the change disables both `aws_scheduler_schedule.weekday_stop` and `aws_scheduler_schedule.monitor` in place; investigate any proposed EC2 replacement or unrelated changes before applying. If an immediate change is needed before Terraform can be applied, disable both schedules in the AWS EventBridge Scheduler console in `ap-northeast-1`, then reconcile with Terraform.
+
+   After applying, verify the two schedules (adjust the names if `project_name` differs from its default):
+   ```bash
+   aws scheduler get-schedule --region ap-northeast-1 \
+     --name vpn-server-tokyo-weekday-stop --query State --output text
+   aws scheduler get-schedule --region ap-northeast-1 \
+     --name vpn-server-tokyo-monitor --query State --output text
+   ```
+   Both must print `DISABLED`. This does **not** start a currently stopped instance; use **Start VPN** when needed.
 
 5. **Retrieve the API key value**
    From `terraform/`, Terraform outputs the API key ID, not the secret value. Use the AWS CLI profile and region for this deployment to fetch the key:
@@ -114,10 +125,14 @@ Run the Web UI tests from the repository root with `node --test tests/test_vpn_c
 
 ## Lambda Behavior Summary
 - **start_instance**: Starts the instance on request at any time and returns the resulting instance state.
-- **stop_instance**: Stops the instance when invoked via API or at midnight on weekdays (Australia/Sydney by default). You can request a start again after it stops. Idempotent when the instance is already stopping or stopped.
+- **stop_instance**: Stops the instance only when explicitly invoked through the API/UI (or by a direct, authorized AWS action). The former weekday midnight schedule is disabled. Idempotent when already stopping or stopped.
 - **check_status**: Reports instance state, IPs, and the latest EC2 system/instance status checks, marking the VPN as available only after both checks pass, with timestamps in Australia/Sydney time.
 - **register_peer**: Accepts a WireGuard public key, allocates the next free `/32` in the configured client CIDR, updates `/etc/wireguard/wg0.conf` through AWS Systems Manager, and returns the assigned IP plus a generated preshared key.
-- **monitor_traffic**: Runs every 15 minutes via EventBridge Scheduler, evaluates combined `NetworkIn`/`NetworkOut` for the trailing 1.5 hours, and stops the instance if sustained traffic ≤ 1 MB/hour.
+- **monitor_traffic**: Retained for possible future use but **not scheduled**. Its former 15-minute EventBridge schedule is disabled, so low traffic never triggers an automatic shutdown in normal operation.
+
+## Shutdown policy
+
+The VPN has **no automatic time limit and no scheduled idle-traffic shutdown**. It continues running (and incurring EC2 charges) until a user selects **Stop VPN** or an external action stops it. The two disabled EventBridge schedules remain Terraform-managed so future applies do not accidentally restore them. To re-enable either policy would require an intentional configuration change and deployment.
 
 ## Cleanup
 To remove all resources, run:
