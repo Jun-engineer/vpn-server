@@ -23,7 +23,11 @@ LOGGER.setLevel(logging.INFO)
 INSTANCE_ID = os.environ["INSTANCE_ID"]
 WG_INTERFACE = os.environ.get("WG_INTERFACE", "wg0")
 IDLE_SECONDS = int(os.environ.get("AUTO_STOP_IDLE_SECONDS", "900"))
-SSM_TIMEOUT_SECONDS = 20
+# SSM SendCommand.TimeoutSeconds has an AWS API minimum of 30 seconds.
+# Bound Lambda-side polling separately: two checks + recheck delay must fit
+# within the Lambda's 60-second timeout, and probe failures must fail open.
+SSM_COMMAND_DELIVERY_TIMEOUT_SECONDS = 30
+SSM_POLL_TIMEOUT_SECONDS = 20
 SSM_POLL_SECONDS = 1
 RECHECK_DELAY_SECONDS = 5
 
@@ -61,10 +65,10 @@ def _handshakes():
         Parameters={"commands": [
             f"wg show {shlex.quote(WG_INTERFACE)} latest-handshakes"
         ]},
-        TimeoutSeconds=SSM_TIMEOUT_SECONDS,
+        TimeoutSeconds=SSM_COMMAND_DELIVERY_TIMEOUT_SECONDS,
     )
     command_id = command["Command"]["CommandId"]
-    deadline = time.monotonic() + SSM_TIMEOUT_SECONDS
+    deadline = time.monotonic() + SSM_POLL_TIMEOUT_SECONDS
     while time.monotonic() < deadline:
         try:
             result = ssm.get_command_invocation(
