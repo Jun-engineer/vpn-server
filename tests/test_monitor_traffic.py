@@ -38,6 +38,9 @@ class FakeSsm:
         assert kwargs["Parameters"]["commands"] == [
             "wg show wg0 latest-handshakes"
         ]
+        # Botocore rejects SSM SendCommand.TimeoutSeconds < 30 even before
+        # contacting AWS. The former setting of 20 prevented every probe.
+        assert kwargs["TimeoutSeconds"] >= 30
         self.calls += 1
         return {"Command": {"CommandId": str(self.calls)}}
 
@@ -172,3 +175,14 @@ def test_idle_window_must_not_be_under_15_minutes(monitor):
             monitor._is_safe_to_stop(NOW - 3600, {PEER: NOW - 1000}, NOW)
     finally:
         monitor.IDLE_SECONDS = original
+
+
+def test_ssm_command_timeout_valid_and_lambda_budget(monitor, monkeypatch):
+    """Two bounded probes plus recheck must stay inside 60s Lambda timeout."""
+    assert monitor.SSM_COMMAND_DELIVERY_TIMEOUT_SECONDS >= 30
+    assert (2 * monitor.SSM_POLL_TIMEOUT_SECONDS
+            + monitor.RECHECK_DELAY_SECONDS) < 60
+    ec2, ssm = setup_fakes(monitor, monkeypatch, ["", ""])
+    assert "auto-stop requested" in read_body(monitor.handler({}, None))["message"]
+    assert ssm.calls == 2
+    assert len(ec2.stops) == 1
